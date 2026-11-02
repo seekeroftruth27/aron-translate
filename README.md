@@ -16,12 +16,12 @@ own API keys. Nobody sits in between.
 | | |
 |---|---|
 | **Cost** | About **$0.15 an hour** with just a Soniox key. Decision Router, Claude retranslation and Soniox voice together come to about $1.60 per hour of speech. |
-| **Setup** | One Windows `.exe`. Paste one key into a text file and double-click. No install, no account with us. |
+| **Setup** | One program for Windows or Linux (PCs and Raspberry Pi). Give it one key and start it. No install, no account with us. |
 | **Languages** | Any of 60 spoken languages, auto-detected. Captions in all 60 with just a Soniox key, or up to 150 with GPT-6 Sol (an OpenAI key). Bilingual services flip direction automatically. [Full tables](https://arontranslate.com/#languages). |
 | **Built for church** | Scripture-aware translation, waits for whole sentences instead of fragments, catches mis-hears and uncouth expressions, projector caption strip, ProPresenter, phone captions via QR code. |
-| **Licence** | Free to use, MIT licensed. |
+| **Licence** | Free to use and open source, MIT licensed. [The source](../../tree/source) is on the `source` branch. |
 
-**[⬇ Download the latest release](../../releases/latest)** · **[Website](https://arontranslate.com/)** · **[Quick start](QUICKSTART.md)**
+**[⬇ Download the latest release](../../releases/latest)** · **[Website](https://arontranslate.com/)** · **[Quick start](QUICKSTART.md)** · **[Source code](../../tree/source)**
 
 ---
 
@@ -35,8 +35,8 @@ so any speaker gets captioned into that single chosen target, with optional
 spoken output where the chosen voice speaks that language.
 
 Everything runs in the **cloud** — there are no local models to install and no
-special hardware. The app ships as a **single Windows `.exe`** that needs no
-Python; you bring a couple of API keys.
+special hardware. The app ships as a **single program**, for Windows or for
+Linux, that needs no Python; you bring a couple of API keys.
 
 ```
 speech ─► VAD chunk / Soniox stream ─► [STT] ──► text ─► [translate] ─► captions
@@ -53,9 +53,12 @@ language), right is always **Translation** (in the chosen target) — so a
 listener just watches the Translation column regardless of who's speaking or
 in what language.
 
-> **This is the releases repo.** It carries the built Windows app and its
-> documentation. Each version is a [GitHub Release](../../releases) with
-> `church-translate.exe` and `.env.example` attached.
+> **Two branches.** `main` (this page) carries the documentation, and each
+> version is a [GitHub Release](../../releases) with the programs attached:
+> `church-translate.exe` for Windows, `church-translate-linux-x86_64.tar.gz`
+> and `church-translate-linux-arm64.tar.gz` for Linux, `SHA256SUMS`, and
+> `.env.example`. [`source`](../../tree/source) carries the full source code,
+> one commit per version.
 
 ## Download and run (Windows)
 
@@ -92,6 +95,29 @@ ELEVENLABS_API_KEY=...    # optional — ElevenLabs spoken output              (
 ```
 
 Every option is documented in **[`.env.example`](.env.example)**.
+
+## Download and run (Linux)
+
+1. From the **[latest release](../../releases/latest)**, download
+   `church-translate-linux-x86_64.tar.gz` for an ordinary PC, or
+   `church-translate-linux-arm64.tar.gz` for a Raspberry Pi 4/5 or other
+   64-bit ARM machine.
+2. Unpack it and start it from a terminal:
+
+   ```bash
+   tar -xzf church-translate-linux-x86_64.tar.gz
+   ./church-translate
+   ```
+
+3. The first time, it asks for your Soniox key in the terminal and saves it
+   in a `.env` beside the program (add more keys there later, as above). Your
+   browser opens to `http://localhost:5000`; pick a target language and click
+   **Start**.
+4. **Stop:** Ctrl+C in the terminal.
+
+It needs glibc 2.35 or newer: Ubuntu 22.04+, Debian 12+, Raspberry Pi OS
+Bookworm+, Fedora 36+. To check a download against the release's `SHA256SUMS`:
+`sha256sum -c SHA256SUMS --ignore-missing`.
 
 ## Models in the pipeline
 
@@ -249,6 +275,27 @@ expected hours before committing. Fully cloud means a network blip kills
 captions mid-sermon; there is no offline fallback. It sends sermon audio to
 third parties (Soniox / ElevenLabs / Anthropic) — likely fine for a church, but
 a conscious decision.
+
+## Source code and contributing
+
+The full source is on the **[`source`](../../tree/source)** branch: the server,
+the operator page, the translators and the web relay. Run it from source on
+Linux, macOS or Windows with Python 3.9+:
+
+```bash
+git clone --branch source https://github.com/seekeroftruth27/aron-translate.git
+cd aron-translate
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env      # then add your Soniox key
+python app/server.py
+```
+
+Bug reports, ideas and fixes are welcome: open an
+[issue](../../issues), or a pull request against the `source` branch. Áron is
+developed elsewhere and each release lands on `source` as one commit, so an
+accepted change is carried into that development and comes back with the next
+version, credited in the CHANGELOG.
 
 ## Licence
 
