@@ -376,6 +376,9 @@ def main():
     # Wait for server to be ready (up to 30 seconds)
     print("Waiting for server to start...")
     url = f'http://localhost:{port}'
+    # --autostart (Windows Task Scheduler before a service, docs/scheduled-start.md):
+    # the page turns Web captions on and starts listening by itself.
+    open_url = url + '/?autostart=1' if '--autostart' in sys.argv[1:] else url
     max_tries = 30
     for attempt in range(max_tries):
         try:
@@ -393,8 +396,8 @@ def main():
         print(f"⚠ Server did not respond after {max_tries}s — trying to open browser anyway...")
 
     # Open browser
-    print(f"Opening {url} in browser...")
-    webbrowser.open(url)
+    print(f"Opening {open_url} in browser...")
+    webbrowser.open(open_url)
     print()
     print("=" * 60)
     print("Church Translate is running")

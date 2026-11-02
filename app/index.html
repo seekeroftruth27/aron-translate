@@ -6439,7 +6439,28 @@ try { loadCaps(); } catch(e) { console.warn('loadCaps', e); }
 try { mdLoad(); } catch(e) { console.warn('mdLoad', e); }
 // Pick up a service a page left in the last 20 minutes (see resumeService).
 try { resumeService(); } catch(e) { console.warn('resumeService', e); }
+// ?autostart=1 (a scheduled task opening the page before a service): Web on, then Start.
+try { autostartFromUrl(); } catch(e) { console.warn('autostart', e); }
 })();
+// Opened as /?autostart=1 -- by Windows Task Scheduler before a service (see
+// docs/scheduled-start.md) -- the page turns Web captions on when a relay is
+// configured and starts listening by itself, as if the operator had pressed
+// Start. The microphone must already be allowed for this page in the browser
+// (it is, once the operator has started from it before). The parameter is then
+// taken off the address, so reloading the page doesn't start it again.
+async function autostartFromUrl(){
+  const q=new URLSearchParams(location.search);
+  if(q.get('autostart')!=='1') return;
+  history.replaceState(null,'',location.pathname);
+  // Wait for loadCaps (its languages fill in when /caps answers), up to 20 s.
+  for(let i=0;i<100 && !Object.keys(caps.languages||{}).length;i++) await new Promise(r=>setTimeout(r,200));
+  if(caps.publish && webStream && !webStream.checked){
+    webStream.checked=true; webStream.dispatchEvent(new Event('change'));
+  }
+  if(listening) return;
+  log('info','auto-start: starting to listen (scheduled)');
+  await start();
+}
 </script>
 <script>
 // ---- projector caption strip ----------------------------------------------

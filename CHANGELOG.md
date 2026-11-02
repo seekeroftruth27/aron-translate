@@ -1,5 +1,18 @@
 # Changelog
 
+## [v2.18.1] — 2026-11-01
+
+### Added
+- **Start by itself before a service.** `church-translate.exe --autostart` opens
+  the page as `/?autostart=1`, which turns **Web** captions on (when a relay is
+  configured) and starts listening, as if the operator had pressed Start; the
+  parameter is then taken off the address, so a reload doesn't start it again.
+  `scripts/aron-schedule.ps1` sets up a Windows scheduled task that does this
+  before each service (Sunday 9:10 and 17:40, Tuesday 18:40 by default); it does
+  nothing when Áron is already running and always runs the newest exe. See
+  `docs/scheduled-start.md`. The browser must already allow the microphone for
+  the page (it does once the operator has started from it).
+
 ## [v2.18.0] — 2026-11-01
 
 ### Added
