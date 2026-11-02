@@ -266,6 +266,9 @@ def _pp_int_env(name, default, lo, hi):
 # LINES/COLS knobs only apply in "word" mode; "off" never wraps or truncates.
 CT_PROPRESENTER_TYPE = (os.environ.get("CT_PROPRESENTER_TYPE") or "off").strip().lower()
 CT_PROPRESENTER_TYPE_MS = _pp_int_env("CT_PROPRESENTER_TYPE_MS", 120, 10, 5000)
+# Follow the Mic: seconds without speech (Mic on) after which the box is cleared too;
+# the next speech brings it back. 0 = the box stays up through any silence.
+CT_PROPRESENTER_QUIET_S = _pp_int_env("CT_PROPRESENTER_QUIET_S", 10, 0, 3600)
 CT_PROPRESENTER_TYPE_WORDS = _pp_int_env("CT_PROPRESENTER_TYPE_WORDS", 1, 1, 40)
 CT_PROPRESENTER_LINES = _pp_int_env("CT_PROPRESENTER_LINES", 2, 1, 8)
 CT_PROPRESENTER_COLS = _pp_int_env("CT_PROPRESENTER_COLS", 42, 10, 300)
@@ -3951,6 +3954,7 @@ def caps_ep():
         publish=PUBLISH_CAPABLE,     # external caption relay (/publish) configured
         propresenter=PROJECT_CAPABLE, # ProPresenter message projection (/project) configured
         propresenter_follow_mic=PROJECT_CAPABLE and CT_PROPRESENTER_FOLLOW_MIC, # the Message is shown/cleared with the Mic, no text
+        propresenter_quiet_s=CT_PROPRESENTER_QUIET_S, # ...and cleared after this many seconds of silence (0 = never)
         projector_w=CT_PROJECTOR_W,  # networked #projector fixed size (px, 0 = fill the window)
         projector_h=CT_PROJECTOR_H,
         projector_bg=CT_PROJECTOR_BG,        # its background (CSS colour, or "transparent")

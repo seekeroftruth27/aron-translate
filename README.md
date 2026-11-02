@@ -527,9 +527,11 @@ CT_PROPRESENTER_FOLLOW_MIC=1
 
 Áron then shows the Message when the translation turns on (**Mic on** while
 listening) and clears it when it turns off (**Muted**, by you or by Gate music, or
-**Stop**), so the box is up while someone speaks and gone for songs. Once per
-change, never per caption; the **ProPresenter** switch in Settings turns it on and
-off. The Message is triggered with no token values, so give it no text token.
+**Stop**), so the box is up while someone speaks and gone for songs. After
+`CT_PROPRESENTER_QUIET_S` seconds (default 10) without speech while the Mic is on it
+clears too, and the next speech brings it back; set it to `0` to keep the box up
+through any silence. Once per change, never per caption. It works with the **ProPresenter** switch in Settings
+left off: that switch only sends caption text, which this mode never does. The Message is triggered with no token values, so give it no text token.
 
 Finalized captions only go to the screen — the same policy as the website. It's
 independent of the web relay and the built-in Project window: run any combination.

@@ -2238,18 +2238,29 @@ function setServiceMode(m,why,fromDetector){
 // is the translation box itself (a web object in its theme carries the captions),
 // so it is shown when the translation turns on -- Mic on while listening -- and
 // cleared when it turns off: Muted (by the operator or Gate music) or Stop. Once per
-// change, never per caption; the ProPresenter switch in Settings governs it.
+// change, never per caption. It does not depend on the ProPresenter switch in Settings:
+// that switch only governs sending caption text, which this mode never does.
 let ppMicState=null;
+// ...and while the room is silent: no speech for CT_PROPRESENTER_QUIET_S with the Mic on clears the
+// box too, and the next speech brings it back (the interval below).
+let ppQuiet=false;
 function ppFollowMic(on){
-  if(!caps.propresenter_follow_mic || !ppStream.checked) return;
-  const state=on?'on':'off';
+  if(!caps.propresenter_follow_mic) return;
+  const state=(on && !ppQuiet)?'on':'off';
   if(state===ppMicState) return;
   ppMicState=state;
-  if(!on){ projectClear(); log('info','ProPresenter box off (mic off)'); return; }
+  if(state==='off'){ projectClear(); log('info','ProPresenter box off ('+(on?'silence':'mic off')+')'); return; }
   fetch('/project',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'show'})})
     .then(r=>r.ok?log('info','ProPresenter box on (mic on)'):r.json().then(d=>log('warn','ProPresenter: '+(d.error||r.status))))
     .catch(e=>log('warn','ProPresenter failed: '+e.message));
 }
+setInterval(()=>{
+  const ms=(caps.propresenter_quiet_s||0)*1000;   // CT_PROPRESENTER_QUIET_S; 0 = never
+  const quiet=ms>0 && listening && translatingNow() && performance.now()-lastSpeechAt>ms;
+  if(quiet===ppQuiet) return;
+  ppQuiet=quiet;
+  ppFollowMic(listening && translatingNow());
+},1000);
 // The Mic button in the ribbon is the mode's face: Mic on = speaking, the whole
 // pipeline running; Muted = held (music), costing nothing. With Gate music on the
 // detector presses it (the dotted underline says so); a click overrules it.
@@ -5559,9 +5570,8 @@ function projectClear(){
 if(ppStream) ppStream.addEventListener('change',()=>{
   localStorage.setItem('ct_ppstream', ppStream.checked?'1':'0'); pushSettings();
   log('info', ppStream.checked?'ProPresenter ON — projecting captions':'ProPresenter OFF');
+  if(caps.propresenter_follow_mic) return;   // the box follows the Mic, not this switch
   if(!ppStream.checked) projectClear();   // leaving projection on-screen would strand the last line
-  if(ppStream.checked){ ppMicState=null; ppFollowMic(listening && translatingNow()); }   // the box catches up
-  else ppMicState=null;
 });
 // A stuck call is not waited for. Up to "final" the call holds the pipeline gate,
 // so every second it hangs is a second the wall stands still while the sermon
