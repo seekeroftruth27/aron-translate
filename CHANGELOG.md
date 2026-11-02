@@ -1,5 +1,16 @@
 # Changelog
 
+## [v2.18.3] — 2026-11-02
+
+### Changed
+- **The Message follows the Mic without the ProPresenter switch.** With
+  `CT_PROPRESENTER_FOLLOW_MIC=1` the box is shown and cleared with the Mic whether or
+  not **ProPresenter** is ticked in Settings › Wall; that switch only sends caption
+  text, which this mode never does.
+- **The box also clears in silence.** With the Mic on, `CT_PROPRESENTER_QUIET_S`
+  seconds (default 10) without speech clear the Message, and the next speech brings
+  it back. `0` keeps the box up through any silence.
+
 ## [v2.18.2] — 2026-11-02
 
 ### Added
