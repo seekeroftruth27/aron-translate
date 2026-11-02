@@ -516,17 +516,20 @@ object above gets for free; it can still do a **rolling word-by-word window**
    A **ProPresenter** switch then appears in Settings › Wall (only when configured).
    Tick it to project; the choice is remembered, and unticking it hides the message.
 
-**Using both together: the Message as an on/off signal for the box.** If you're
-using the web-object page above for the actual captions, this Message doesn't
-need to carry text at all — set `CT_PROPRESENTER_SIGNAL=1` and Áron instead
-triggers it with a fixed **`.`** the moment the translation box should be
-*showing*, and **clears** it the moment it should be *hidden* (ticking/unticking
-the **ProPresenter** toggle, or **Clear wall**). Wire a prop or layer's
-visibility in ProPresenter to that Message's active/cleared state (or have a
-macro's own Trigger/Clear actions key off it) to actually show or hide
-something from it — that part is configured in ProPresenter itself; Áron only
-flips the flag. Off by default, so without it the Message keeps carrying real
-text as its own standalone display, per everything below.
+**The Message as the translation box, following the Mic.** If the box on screen
+is the Message itself — for example a web object in the Message's theme carries the
+captions — the Message needs no text. Set:
+
+```
+CT_PROPRESENTER_MESSAGE=LIVE Translation
+CT_PROPRESENTER_FOLLOW_MIC=1
+```
+
+Áron then shows the Message when the translation turns on (**Mic on** while
+listening) and clears it when it turns off (**Muted**, by you or by Gate music, or
+**Stop**), so the box is up while someone speaks and gone for songs. Once per
+change, never per caption; the **ProPresenter** switch in Settings turns it on and
+off. The Message is triggered with no token values, so give it no text token.
 
 Finalized captions only go to the screen — the same policy as the website. It's
 independent of the web relay and the built-in Project window: run any combination.

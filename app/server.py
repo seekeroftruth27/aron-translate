@@ -238,6 +238,12 @@ if CT_PROPRESENTER_URL and "://" not in CT_PROPRESENTER_URL:
 CT_PROPRESENTER_MESSAGE = (os.environ.get("CT_PROPRESENTER_MESSAGE") or "").strip()
 CT_PROPRESENTER_TOKEN = (os.environ.get("CT_PROPRESENTER_TOKEN") or "Caption").strip()
 PROJECT_CAPABLE = bool(CT_PROPRESENTER_URL and CT_PROPRESENTER_MESSAGE)
+# Follow the Mic: the Message is the translation box itself (e.g. a web object in
+# the Message's theme carries the captions), so instead of caption text Aron only
+# turns it on and off: triggered (with no token values) when the translation turns
+# on -- Mic on while listening -- and cleared when it turns off: Muted (by the
+# operator or Gate music) or Stop. Off by default: the Message carries the text.
+CT_PROPRESENTER_FOLLOW_MIC = (os.environ.get("CT_PROPRESENTER_FOLLOW_MIC") or "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _pp_int_env(name, default, lo, hi):
@@ -271,17 +277,6 @@ CT_PROPRESENTER_COLS = _pp_int_env("CT_PROPRESENTER_COLS", 42, 10, 300)
 # CT_PROPRESENTER_LINES tall).
 CT_PROPRESENTER_SCROLL_MS = _pp_int_env("CT_PROPRESENTER_SCROLL_MS", 220, 0, 3000)
 PROJECT_TYPING = PROJECT_CAPABLE and CT_PROPRESENTER_TYPE == "word"
-# Signal-only mode: when the /projector web-object page (CT_PROJECTOR_*) is doing
-# the actual on-screen captioning, this Message no longer needs to carry text at
-# all -- repurposed as a pure ON/OFF flag for the translation box instead, so
-# ProPresenter-side automation (a prop/layer bound to the Message's active state,
-# a macro's own Trigger/Clear) can react to it. The browser sends a fixed "." to
-# mark the box ON and clears the Message to mark it OFF, instead of the real
-# caption text. Off by default so the Message-only fallback path (no web object;
-# the Message itself IS the visible caption, per the README's "Or:" section)
-# keeps carrying real text exactly as before -- opt in only when also using the
-# web-object page.
-CT_PROPRESENTER_SIGNAL = bool(_pp_int_env("CT_PROPRESENTER_SIGNAL", 0, 0, 1))
 
 # Diagnostic: log the INPUT of each /translate call (the source text handed to the
 # model), so a runaway can be correlated with its output. Counts are always logged;
@@ -428,6 +423,22 @@ def _pp_send_text(text):
         r = _get_http_session().post(
             f"{CT_PROPRESENTER_URL}/v1/message/{msg}/trigger",
             json=body, headers={"Accept": "application/json"}, timeout=5)
+        if r.status_code not in (200, 204):
+            return False, f"ProPresenter HTTP {r.status_code}"
+        return True, None
+    except Exception as exc:
+        print(f"[project] ERROR: {exc}", flush=True)
+        return False, str(exc)[:120]
+
+
+def _pp_show():
+    """Show the ProPresenter Message without changing any token (follow-the-Mic
+    mode: the Message's theme carries the box). Returns (ok, error-or-None)."""
+    msg = quote(CT_PROPRESENTER_MESSAGE, safe="")
+    try:
+        r = _get_http_session().post(
+            f"{CT_PROPRESENTER_URL}/v1/message/{msg}/trigger",
+            json=[], headers={"Accept": "application/json"}, timeout=5)
         if r.status_code not in (200, 204):
             return False, f"ProPresenter HTTP {r.status_code}"
         return True, None
@@ -2945,7 +2956,8 @@ def project_ep():
     ProPresenter hiccup must never disturb the in-room captions or the projector
     window, so any failure returns a JSON error the browser just logs.
 
-    Body: {text} to show/update the line, or {action:"clear"} to hide it.
+    Body: {text} to show/update the line, {action:"clear"} to hide it, or
+    {action:"show"} to show it unchanged (CT_PROPRESENTER_FOLLOW_MIC).
 
     Matches the current official ProPresenter API (verified against the published
     OpenAPI): POST /v1/message/{id}/trigger with an array of token values -- a text
@@ -2964,6 +2976,9 @@ def project_ep():
         if _projector_typer is not None:
             _projector_typer.clear()
         ok, err = _pp_clear()
+        return jsonify(ok=True) if ok else (jsonify(error=err), 502)
+    if action == "show":   # follow-the-Mic: show the Message as it is (CT_PROPRESENTER_FOLLOW_MIC)
+        ok, err = _pp_show()
         return jsonify(ok=True) if ok else (jsonify(error=err), 502)
     text = (data.get("text") or "")[:1000]
     if not text:
@@ -3935,7 +3950,7 @@ def caps_ep():
               if EARS_ENABLED else []),                                      # (off unless CT_EARS=1)
         publish=PUBLISH_CAPABLE,     # external caption relay (/publish) configured
         propresenter=PROJECT_CAPABLE, # ProPresenter message projection (/project) configured
-        propresenter_signal=CT_PROPRESENTER_SIGNAL, # the Message is an on/off box signal, not caption text
+        propresenter_follow_mic=PROJECT_CAPABLE and CT_PROPRESENTER_FOLLOW_MIC, # the Message is shown/cleared with the Mic, no text
         projector_w=CT_PROJECTOR_W,  # networked #projector fixed size (px, 0 = fill the window)
         projector_h=CT_PROJECTOR_H,
         projector_bg=CT_PROJECTOR_BG,        # its background (CSS colour, or "transparent")

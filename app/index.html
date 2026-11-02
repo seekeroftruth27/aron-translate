@@ -1875,6 +1875,7 @@ listenBtn.addEventListener('click',()=>listening?stop():start());
 // states, so nothing beside it moves when it is pressed.
 let liveSince=0;
 function setListenUI(on){
+  ppFollowMic(on && translatingNow());   // ProPresenter's box follows the translation on/off
   listenBtn.classList.toggle('on',on);
   $('listenTxt').textContent=on?'Stop':'Start listening';
   listenBtn.title=(on?'Stop listening':'Start listening')+' (Space)';
@@ -2231,6 +2232,23 @@ function setServiceMode(m,why,fromDetector){
       +(translatingNow()?' — translating':' — pipeline held')
       +(why?' ('+why+')':''));
   applyPipelineGate(why);
+  if(listening) ppFollowMic(translatingNow());
+}
+// Follow the Mic (CT_PROPRESENTER_FOLLOW_MIC on the server): the ProPresenter Message
+// is the translation box itself (a web object in its theme carries the captions),
+// so it is shown when the translation turns on -- Mic on while listening -- and
+// cleared when it turns off: Muted (by the operator or Gate music) or Stop. Once per
+// change, never per caption; the ProPresenter switch in Settings governs it.
+let ppMicState=null;
+function ppFollowMic(on){
+  if(!caps.propresenter_follow_mic || !ppStream.checked) return;
+  const state=on?'on':'off';
+  if(state===ppMicState) return;
+  ppMicState=state;
+  if(!on){ projectClear(); log('info','ProPresenter box off (mic off)'); return; }
+  fetch('/project',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'show'})})
+    .then(r=>r.ok?log('info','ProPresenter box on (mic on)'):r.json().then(d=>log('warn','ProPresenter: '+(d.error||r.status))))
+    .catch(e=>log('warn','ProPresenter failed: '+e.message));
 }
 // The Mic button in the ribbon is the mode's face: Mic on = speaking, the whole
 // pipeline running; Muted = held (music), costing nothing. With Gate music on the
@@ -5522,50 +5540,28 @@ if(webStream) webStream.addEventListener('change',()=>{
 // local server drives ProPresenter's on-screen Message (it holds the LAN address;
 // a browser can't reach ProPresenter's API for CORS). Same fire-and-forget shape
 // -- a failure only logs, never touching the in-room captions or projector window.
-// Only sent when the server advertises ProPresenter AND the box is ticked.
-// Two modes, picked by the server's CT_PROPRESENTER_SIGNAL (caps.propresenter_signal):
-//   off (default) -- the Message IS the visible caption (no web-object page in
-//     use): every finalized caption's real text goes to it, as always.
-//   on -- the /projector web-object page carries the actual caption text, so
-//     this Message is repurposed as a pure ON/OFF SIGNAL for the translation
-//     box: triggered with a fixed "." when the box should be showing, cleared
-//     when it should be hidden. Whatever ProPresenter-side automation reacts to
-//     that (a prop/layer bound to the Message's active state, a macro's own
-//     Trigger/Clear actions) is wired up in ProPresenter itself -- Aron only
-//     flips the flag. ppOn dedupes so it fires once per on/off edge, not once
-//     per caption: projectSeg (called on every finalized caption) is a fallback
-//     that catches the ON edge even if the checkbox was already ticked before
-//     the first caption of the service (e.g. restored from localStorage on
-//     load, which sets .checked directly and fires no 'change' event).
+// Only sent when the server advertises ProPresenter AND the box is ticked. The
+// Message carries each finalized caption's text -- or, with follow-the-Mic, none:
+// it is just shown and cleared with the Mic (see ppFollowMic).
 function projecting(){ return caps.propresenter && ppStream.checked; }
-let ppOn=false;
-function projectOn(){
-  if(ppOn) return;
-  ppOn=true;
-  fetch('/project',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({text:'.'})})
-    .then(r=>r.ok||r.json().then(d=>log('warn','ProPresenter: '+(d.error||r.status))))
-    .catch(e=>log('warn','ProPresenter failed: '+e.message));
-}
 function projectSeg(text,id){
-  if(!projecting() || !text || wallDead(id)) return;
-  if(caps.propresenter_signal){ projectOn(); return; }
+  if(!projecting() || !text || wallDead(id) || caps.propresenter_follow_mic) return;   // follow-the-Mic: no text
   fetch('/project',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({text})})
     .then(r=>r.ok||r.json().then(d=>log('warn','ProPresenter: '+(d.error||r.status))))
     .catch(e=>log('warn','ProPresenter failed: '+e.message));
 }
 function projectClear(){
-  ppOn=false;
   if(!caps.propresenter) return;   // hide the on-screen message regardless of the box
   fetch('/project',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'clear'})}).catch(()=>{});
 }
 if(ppStream) ppStream.addEventListener('change',()=>{
   localStorage.setItem('ct_ppstream', ppStream.checked?'1':'0'); pushSettings();
-  log('info', ppStream.checked?('ProPresenter ON — '+(caps.propresenter_signal?'box signalled on':'projecting captions')):'ProPresenter OFF');
-  if(caps.propresenter_signal){ if(ppStream.checked) projectOn(); else projectClear(); }
-  else if(!ppStream.checked) projectClear();   // leaving projection on-screen would strand the last line
+  log('info', ppStream.checked?'ProPresenter ON — projecting captions':'ProPresenter OFF');
+  if(!ppStream.checked) projectClear();   // leaving projection on-screen would strand the last line
+  if(ppStream.checked){ ppMicState=null; ppFollowMic(listening && translatingNow()); }   // the box catches up
+  else ppMicState=null;
 });
 // A stuck call is not waited for. Up to "final" the call holds the pipeline gate,
 // so every second it hangs is a second the wall stands still while the sermon
