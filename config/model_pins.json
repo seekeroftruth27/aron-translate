@@ -1,0 +1,74 @@
+{
+  "_comment": "What each pinned model looked like when it was last validated. Drift against this is reported at startup; see scripts/model_pins.py. Edit latency_p50_s to set the runtime latency alarm's baseline, or run the script with --adopt to re-record identity from the live catalogues.",
+  "pins": {
+    "claude-haiku-4-5": {
+      "latency_p50_s": 0.6,
+      "note": "Default translator. latency_p50_s measured over 9 live calls 2026-08-12; re-measure from the [mt] median line if the venue network differs materially.",
+      "provider": "anthropic",
+      "seen": {
+        "display_name": "Claude Haiku 4.5",
+        "present": true,
+        "served_as": "claude-haiku-4-5-20251001"
+      }
+    },
+    "claude-sonnet-5": {
+      "latency_p50_s": null,
+      "note": "Offered at effort 'low' only -- higher effort bought nothing and risked editorialising (see translate_claude.TRANSLATE_EFFORT).",
+      "provider": "anthropic",
+      "seen": {
+        "display_name": "Claude Sonnet 5",
+        "present": true
+      }
+    },
+    "gemini-3.5-flash-lite": {
+      "latency_p50_s": 0.54,
+      "note": "Default Gemini option. thinking_level is the pin that matters: Gemini 3.x reasons BY DEFAULT (~490 hidden tokens before the first word), so drift on that field is the alarm here -- the same shape of failure as non_reasoning on the Grok pin. latency_p50_s is TTFT over 15 streamed calls on the full system prompt; re-measure from the [mt] median line if the venue network differs. Prompt caching is EXPLICIT for this provider (implicit caching never fired): the system prompt is held as a cachedContents object, 99.5% of the prompt served from cache, cost only -- latency is unchanged. CT_GEMINI_CACHE=0 disables it. Soak-tested for reasoning spill: 1600 calls at thinking_level 'minimal' across nine stress conditions, zero thought tokens (95% upper bound 0.19%); the same harness caught gemini-3.8-flash leaking 7.2%. It is safe because it sits TWO levels below its own reasoning threshold (it reasons at 'medium'), so thinking_level drift on THIS pin is the thing to watch.",
+      "provider": "gemini",
+      "seen": {
+        "present": true,
+        "thinking_level": "minimal",
+        "version": "3.5-flash-lite-07-2026"
+      }
+    },
+    "gemini-3.8-flash": {
+      "latency_p50_s": 0.96,
+      "note": "Second Gemini option -- better at recovering the hyphens Romanian STT drops (ro-clitic 17.7/18 vs 16.3/18), at ~2x the tail (TTFT p95 2.17s vs 0.67s). REJECTS thinking_level 'minimal' with a 400; its floor is 'low', which is the lowest level it ACCEPTS and not a guarantee of zero reasoning -- it still thinks on a minority of calls. Use gemini-3.5-flash-lite where reasoning must be fully off.",
+      "provider": "gemini",
+      "seen": {
+        "present": true,
+        "thinking_level": "low",
+        "version": "3.0"
+      }
+    },
+    "gpt-5.2": {
+      "latency_p50_s": null,
+      "note": "Added 2026-09-16: the newest GPT-5 that fits a caption -- probed at reasoning_effort 'none', 0 reasoning tokens, 0.93s median to first character (gpt-5.5 at 'none' is 2.5s and is not offered). It rejects 'minimal', so the pin in translate_openai.REASONING_EFFORT is 'none'; drift there would put seconds of thinking before the first word. latency_p50_s: set from the first validation sweep.",
+      "provider": "openai",
+      "seen": {
+        "owned_by": "system",
+        "present": true
+      }
+    },
+    "grok-4.20-non-reasoning": {
+      "latency_p50_s": null,
+      "note": "The alias, not the dated id, is pinned on purpose -- see translate_xai. non_reasoning is the property that silently went missing once before; drift on it is the alarm this file exists for.",
+      "provider": "xai",
+      "seen": {
+        "context_length": 1000000,
+        "non_reasoning": true,
+        "present": true,
+        "served_as": "grok-4.20-0309-non-reasoning"
+      }
+    },
+    "grok-4.3": {
+      "latency_p50_s": null,
+      "note": "Added 2026-09-16. Reasons BY DEFAULT (8.8s to first token, 376 reasoning tokens on one sentence) and is offered only because reasoning_effort='none' switches it off (1.0s, 0 tokens) -- translate_xai.PINNED_EFFORT sends that on every request and warns if reasoning tokens ever come back. grok-4.5/4.6 reject 'none' (floor 'low', still seconds of thinking) and stay out. non_reasoning here means 'pinned', not an id of its own. latency_p50_s: set from the first validation sweep.",
+      "provider": "xai",
+      "seen": {
+        "non_reasoning": true,
+        "present": true,
+        "pinned_effort": "none"
+      }
+    }
+  }
+}

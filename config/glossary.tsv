@@ -1,0 +1,48 @@
+# Congregation glossary for the LLM translator, injected into the system
+# prompt (config/translation_prompt.txt) as {glossary} and {idioms}.
+#
+# Claude already knows standard biblical names and common Romanian idioms on
+# its own -- these entries are a top-up, not a training set. Mention any
+# specific regionalisms here: rare or local proper names, in-group
+# nicknames, or regional phrases specific to your congregation that a
+# general model wouldn't already know.
+#
+# Two sections below, each starting with a "## " header line:
+#   ## NAMES   Romanian<TAB>English biblical/proper names (bidirectional)
+#   ## IDIOMS  Romanian idiom<TAB>English meaning (source-Romanian only)
+# ("#" starts a comment; blank lines are ignored; use a real TAB between columns.)
+#
+# SHRINKING THIS FILE: entries below are annotated [known 3/3] or [MISSED 3/3]
+# from scripts/glossary_dependence.py, which re-runs the figurative_stress
+# regional+idiom cases with this file emptied out. Measured Aug 2026 on
+# grok-4.20-non-reasoning / grok-4.3 / grok-4.5; re-run it after any model
+# change, since the answer is per-model (grok-4.5 knew two idioms unaided that
+# the other two missed entirely).
+#
+# "known 3/3" means every model tested got that case right with no glossary --
+# a candidate for retirement, NOT a safe delete. This file does three jobs and
+# only the first is knowledge:
+#   1. knowledge     -- "curechi means cabbage". This is what the harness tests.
+#   2. consistency   -- pinning ONE house rendering, so a phrase doesn't drift
+#                       between segments while it's up on the wall.
+#   3. mis-hear anchor -- "this is a known biblical name, not a mis-hearing":
+#                       a prior about Soniox's error distribution, not about
+#                       Romanian. No amount of model knowledge replaces it.
+# An entry doing job 2 or 3 stays even when the model knows it cold.
+
+## NAMES
+Avraam	Abraham
+Iosif	Joseph
+Moise	Moses
+
+## IDIOMS
+# Emptied 2026-10-19. The ~50 idioms and 6 regional words that lived here were
+# mined in Aug/Sep 2026 against Haiku 4.5 and the Grok models; the translators
+# in use now know them unaided (validation/scripts/glossary_dependence.py, 3 runs,
+# with vs without: gpt-6-sol regional 19.3 / 19.3, idioms 17.7 / 18.3;
+# gpt-6-luna 18.3 / 19.0, 18.0 / 18.0 -- the only loss "a-i pica fisa", Sol 0/3),
+# and under the Router a word-for-word idiom is what its gate sends to the
+# translator. Removing them took ~1,000 tokens off every call's prompt. The old
+# list is in git history; config/idiom_candidates.tsv keeps the mining pool.
+# Add here only what this congregation actually says and a model gets wrong:
+#   Romanian idiom<TAB>English meaning

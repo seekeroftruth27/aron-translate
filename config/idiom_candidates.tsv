@@ -1,0 +1,164 @@
+# Candidate pool for scripts/idiom_mining.py -- Romanian idioms, regionalisms
+# and church-register vocabulary, each with a test sentence, mined to find the
+# ones a model does NOT already know.
+#
+# The point is NOT to ship this file. It is a sieve: every entry here is run
+# through the translator with an EMPTY glossary, and only the ones that come out
+# WRONG have any claim on a glossary slot. An entry the model already knows is
+# exactly the "fluff" a padded glossary is made of -- it costs prompt tokens,
+# competes for attention with the rules that matter, and buys nothing.
+#
+# Columns, TAB-separated:
+#   1 expression      the Romanian, as it would be spoken
+#   2 meaning         the gloss that would go in config/glossary.tsv
+#   3 test sentence   plausible sermon/church speech containing it
+#   4 must            |-separated regexes; ANY match = meaning came through
+#   5 must_not        |-separated regexes; ANY match = calqued/word-for-word
+#                     (may be empty where there is no clean literal to catch)
+#
+# CAVEAT FOR REVIEW: these were written from model knowledge, not by a native
+# speaker, and regional attributions especially are the kind of thing that is
+# easy to get subtly wrong. Anything promoted out of here into glossary.tsv
+# should be checked by someone who speaks the register.
+
+## IDIOMS
+a-i pica fisa	to finally understand; the penny drops	Abia atunci i-a picat fisa că Dumnezeu îi vorbise de mult.	penny drop|finally (understood|realiz|got it)|it (finally )?(hit|dawn)|clicked|sank in	coin fell|token fell|chip fell|slot
+a bate câmpii	to ramble, to talk nonsense	Nu mai bate câmpii, frate, spune-ne ce ai văzut.	rambl|talk(ing)? nonsense|beat(ing)? around the bush|drivel|off track|wander(ing)? off	beat the field|beating the field|strike the field
+a face din țânțar armăsar	to make a mountain out of a molehill	Nu face din țânțar armăsar dintr-o vorbă nesocotită.	mountain out of a molehill|blow.{0,15}out of proportion|exaggerat|make.{0,10}big deal	mosquito|stallion|gnat.{0,10}horse
+a-și lua inima în dinți	to muster one's courage	Și-a luat inima în dinți și a mărturisit înaintea tuturor.	muster|took (his|her).{0,10}courage|plucked up|steeled|braced|worked up the courage|found the courage|took heart	heart in (his|her|the) teeth|took his heart in
+a o lua la sănătoasa	to take to one's heels, to flee	Când a văzut ce se întâmplă, a luat-o la sănătoasa.	took to (his|her) heels|ran (off|away)|fled|bolted|made a run|took off	took it to the healthy|took the healthy
+a da din colț în colț	to flounder, to be at a loss for an answer	Întrebat de unde are banii, a dat din colț în colț.	flounder|at a loss|hem(med)? and haw|evasive|dodg|squirm|stammer|beat around	corner to corner|from corner to
+a-i sări țandăra	to lose one's temper	I-a sărit țandăra când a auzit batjocura.	lost (his|her) temper|flew into a rage|snapped|blew up|flare|lost it	splinter|chip jumped
+a tăia frunză la câini	to idle, to waste one's time	Tinerii aceia taie frunză la câini toată ziua.	idl|loaf|wast(e|ing).{0,12}time|do(ing)? nothing|lounge|laz	cut(ting)? leaves|leaf.{0,8}dogs|leaves (for|to) (the )?dogs
+a spăla putina	to clear off, to abscond	Când a venit vremea socotelii, a spălat putina.	cleared off|made off|abscond|skipped town|slipped away|did a runner|took off|scarpered	wash(ed)? the barrel|washed the tub|washing the
+a pune paie pe foc	to add fuel to the fire	Vorbele lui n-au făcut decât să pună paie pe foc.	fuel to the (fire|flame)|add.{0,12}fuel|stoke|inflame	straw on the fire|put straw
+a rămâne mască	to be stunned speechless	Am rămas mască auzind mărturia lui.	stunned|astonish|speechless|dumbfounded|floored|amazed|jaw drop	remained (a )?mask|stayed mask|left a mask
+a se uita ca mâța-n calendar	to look utterly bewildered	Se uita ca mâța-n calendar când i-am explicat Scriptura.	bewilder|blank(ly)?|no idea|baffl|puzzl|clueless|uncomprehend|lost	cat in the calendar|like a cat in
+a fi cu scaun la cap	to be level-headed and sensible	E un om cu scaun la cap, ascultați-l.	sensible|level.{0,4}headed|sound (judgment|mind)|good head|wise|prudent|his head screwed on	chair (at|on|to) (his|the) head|seat at the head
+a strica orzul pe gâște	to waste good things on those who cannot value them	Nu strica orzul pe gâște cu asemenea oameni.	waste|pearls before swine|not worth|squander|throw(ing)? away	barley|geese|goose
+a călca pe bec	to step out of line, to break a rule	Dacă mai calci pe bec, nu mai poți sluji.	step(s|ped)? out of line|break.{0,12}rule|slip up|out of line|transgress|misbehav|mess up	step on the (light )?bulb|tread on the bulb
+a nu avea perdea la gură	to be foul-mouthed, to say anything	Omul acela n-are perdea la gură.	foul.{0,8}mouth|no filter|says (anything|whatever)|unguarded|coarse|crude|shameless|holds nothing back	curtain (at|on|over|to) (his|the) mouth|no curtain
+a scoate din sărite	to exasperate someone	Zgomotul acela mă scoate din sărite.	exasperat|drives me (mad|crazy|up the wall)|infuriat|gets on my nerves|irritat|winds me up	out of (the |my )?jumps|out of leaps
+a fi într-o ureche	to be a bit crazy	Vecinul nostru e cam într-o ureche.	(a bit|slightly|somewhat|little).{0,12}(crazy|mad|off|odd)|not (all|quite) there|eccentric|touched|screw loose	in one ear|into an ear
+a trage mâța de coadă	to live in poverty, to scrape by	Am tras mâța de coadă ani de zile, dar Domnul ne-a purtat de grijă.	scrape(d)? by|poverty|hand to mouth|barely.{0,15}(by|ends meet)|struggl|hard up|penniless	pull(ed|ing)? the cat|cat by the tail
+a se duce pe apa sâmbetei	to go down the drain, to come to nothing	Toată munca lui s-a dus pe apa sâmbetei.	down the drain|to waste|came to nothing|for nothing|all for naught|up in smoke|out the window	saturday|water of
+a da apă la moară	to give grist to someone's mill, to play into their hands	Nu-i da apă la moară celui ce caută ceartă.	grist.{0,12}mill|play(ing)? into|encourag|fuel|ammunition|give.{0,12}excuse	water to the mill|gives water to
+a face pe dracu-n patru	to do absolutely everything possible	A făcut pe dracu-n patru ca să ajungă la vreme.	everything (he|she) could|moved heaven and earth|great lengths|everything possible|bent over backwards|all he could	devil in four|make the devil|quarter
+a-și da arama pe față	to show one's true colours	Până la urmă și-a dat arama pe față.	true colou?rs|showed (his|her) true|revealed (his|her) true|showed himself for what	copper|brass|bronze
+a lega paraua cu zece noduri	to be extremely stingy	Leagă paraua cu zece noduri, deși are de unde da.	stingy|tight.{0,8}fisted|miser|penny.{0,10}pinch|skinflint|cheap|hoard	ten knots|coin with ten|penny with ten
+a fi mână spartă	to be a spendthrift	Fratele lui e mână spartă, cheltuie tot ce câștigă.	spendthrift|squander|throws money|profligate|wasteful|money.{0,15}(hole|burn)|through his fingers	broken hand|hand broken|hole in his hand
+a fi la ananghie	to be in dire straits	Familia aceea e la ananghie și are nevoie de ajutor.	dire straits|(in |real )?trouble|hard (up|times)|desperate|dire need|bad way|tight spot	anankhi|ananghie
+a scăpa ca prin urechile acului	to escape by the narrowest margin	Am scăpat ca prin urechile acului în accidentul acela.	(narrow|hair.{0,8}breadth|close).{0,12}escape|by a hair|skin of (my|his|our) teeth|barely (escaped|survived)|close call|eye of a needle
+a fi pâinea lui Dumnezeu	to be exceedingly kind and good-natured	Sora aceea e pâinea lui Dumnezeu.	kind|good.{0,8}(heart|natured)|gentle|salt of the earth|gold|sweetest|goodness itself	bread of God|God's bread
+a-l lua gura pe dinainte	to blurt something out	L-a luat gura pe dinainte și a spus ce nu trebuia.	blurt|let (it |that )?slip|spoke before|ran away with him|slipped out|ahead of himself|said.{0,15}(without thinking|too much)	mouth took him|took his mouth
+a bate apa în piuă	to talk in circles, to labour a point pointlessly	De o oră batem apa în piuă și n-am hotărât nimic.	(talk|go|going).{0,12}(in )?circles|beat(ing)? a dead horse|get(ting)? nowhere|round and round|rehash|spinning our wheels	water in the mortar|beat(ing)? water
+a-și pune pofta-n cui	to give up on getting something	Dacă nu-i pentru tine, pune-ți pofta-n cui.	give up|forget (about )?(it|that)|kiss.{0,12}goodbye|do without|whistle for it|put.{0,12}out of (your|his) mind	appetite (in|on) (a |the )?nail|desire on a nail
+a nu-i fi boii acasă	to be out of sorts, in a bad mood	Astăzi nu-i sunt boii acasă, lasă-l în pace.	out of sorts|bad mood|not himself|off (colour|form)|grumpy|foul mood|wrong side of the bed	oxen|cattle|bulls
+a se pune cu burta pe carte	to buckle down and study hard	S-a pus cu burta pe carte și a trecut examenul.	buckle(d)? down|hit(ting)? the books|studied hard|(applied|threw) himself|knuckled down|got down to	belly on the book|stomach on
+a-i sufla în ceafă	to breathe down someone's neck	Concurența le suflă în ceafă.	breath(e|es|ing) down|on (his|their|our) (heels|tail)|hot on|close behind|snapping at	blow(ing)? in the (neck|nape)|blows on the neck
+a-l durea-n cot	not to care in the least	Îl doare-n cot de ce spune lumea.	(could|couldn't) care less|doesn't care|no concern|not bothered|indifferent|doesn't give a	hurts (him )?in the elbow|elbow hurts|pain in the elbow
+a fi cu musca pe căciul	to have a guilty conscience	Cine e cu musca pe căciulă sare primul.	guilty (conscience|party)|something to hide|conscience.{0,12}(bother|prick|troubl)|cap fits|shoe fits|guilty man	fly on (the|his) (cap|hat)|with the fly
+a ajunge la sapă de lemn	to be reduced to utter poverty	A ajuns la sapă de lemn din pricina lăcomiei.	utter(ly)? (poor|poverty)|ruin|destitute|pauper|lost everything|beggar|penniless|rack and ruin	wooden hoe|wooden spade
+a-și lua lumea în cap	to leave everything behind and wander off	Și-a luat lumea în cap și nu l-a mai văzut nimeni.	left everything|wandered off|took off|disappeared|walked away from|set out into the world|ran away	took the world in his head|world in his head
+a nu face doi bani	to be worth nothing	Sfatul lui nu face doi bani.	worth (nothing|little)|worthless|not worth a|no good|useless|not worth two	make two money|do two money
+a prinde cheag	to become well-off	De când s-a mutat în oraș, a prins cheag.	well.{0,4}off|prosper|made money|got rich|comfortable|put something aside|on his feet	rennet|curd|clot
+a face casă bună cu	to get along well with	Credința și fapta fac casă bună împreună.	get(s)? (on|along) (well )?with|go (well )?together|hand in hand|good match|compatible|at home with	make a good house|build a good house
+a-i toca la cap	to nag someone incessantly	Nu-mi mai toca la cap cu aceleași vorbe.	nag|go(ing)? on at|pester|badger|earful|on and on|drone on|chew(ing)? (my|his) ear	chop.{0,10}head|mince.{0,10}head|grind.{0,10}head
+a se da de ceasul morții	to go to desperate lengths	S-a dat de ceasul morții să-și salveze copilul.	desperate|frantic|moved heaven and earth|everything (he|she) could|great lengths|beside himself|all out	hour of death|clock of death|watch of death
+a fi trecut prin ciur și prin dârmon	to have been through a great deal, to be seasoned	Bătrânul acela a trecut prin ciur și prin dârmon.	been through|seasoned|hardened|experienced|seen it all|through thick and thin	sieve|sifter|riddle
+a-i da inima ghes	to feel a strong urge	Îi dădea inima ghes să se ridice și să mărturisească.	urge|prompted|moved (him|her)|felt (a |the )?(pull|stir)|heart (told|urged|pressed)|impelled|compelled	give the heart
+a-și face sânge rău	to fret and upset oneself	Nu-ți face sânge rău pentru vorbele lor.	fret|upset|get worked up|stew|torment (yourself|himself)|lose sleep|eat (yourself|himself) up	bad blood|make bad blood
+a o scălda	to hedge, to be evasive	Când l-am întrebat direct, a început s-o scalde.	hedg|evasive|dodg|waffl|equivocat|beat around|skirt(ed|ing)?|wishy	bathe|bath|swim
+a-i ieși pe nas	to backfire on someone, to pay dearly for	I-a ieșit pe nas lăcomia aceea.	backfire|cost (him|her) dear|pay(ing)? for|came back (to haunt|on)|blew up in|rue	out (of|through) (his|the) nose|on his nose
+a fi cu ochii în patru	to be extremely vigilant	Fiți cu ochii în patru, că vrăjmașul dă târcoale.	(keep|be|been|on).{0,12}(sharp )?(watch|lookout|guard|alert)|vigilant|eyes (peeled|open)|wits about	eyes in four|four eyes
+a-l lăsa baltă	to abandon something or someone	A lăsat baltă lucrarea la care fusese chemat.	abandon|dropped|left.{0,12}(hanging|behind|in the lurch)|gave up on|walked away from|ditched	leave.{0,10}(a )?(pond|puddle|swamp|marsh)|left it a pond
+a da chix	to fail, to flop	Planul lor a dat chix de la început.	fail|flop|fell (through|flat)|came to nothing|misfire|went wrong|bombed	gave chix|did chix
+a-i merge la inimă	to touch one's heart	Cântarea aceea mi-a mers la inimă.	touched (my|his|her).{0,10}heart|went straight to|moved me|struck a chord|spoke to my heart	went to my heart(?! )|walks to the heart
+a-i sta ca un os în gât	to be a thorn in one's side	Mărturia lui le stătea ca un os în gât.	(thorn|bone).{0,15}(side|throat)|stuck in (his|their).{0,10}(craw|throat)|couldn't stomach|galled|irritant
+a bate șaua să priceapă iapa	to hint at one person by addressing another	Bate șaua ca să priceapă iapa, dar toți am înțeles.	hint|indirect|getting at someone else|meant for|not really (talking|addressing)|for someone else's benefit|through	saddle|mare
+a rămâne cu buza umflată	to be left disappointed and empty-handed	Au rămas cu buza umflată după ce li s-a promis atâta.	empty.{0,8}handed|disappoint|left with nothing|out in the cold|high and dry|nothing to show	swollen lip|puffy lip|fat lip
+a fi cu inima cât un purice	to be scared stiff	Aveam inima cât un purice când m-am ridicat să vorbesc.	(scared|frightened|terrified).{0,10}(stiff|to death)?|heart in (my|his) (mouth|throat)|quaking|trembl|petrified|nerves	heart (as big |the size of )?(a |as a )?flea|like a flea
+a-i crește inima	one's heart swells with joy	Îmi creștea inima văzând tinerii lăudând pe Domnul.	heart (swell|leap|lift|soar|glad|warm|rejoic|full)|filled with joy|overjoyed|thrilled|warmed my heart	heart grew|growing heart|heart was growing
+a-l trece toate apele	to break into a cold sweat	L-au trecut toate apele când i s-a cerut socoteală.	cold sweat|broke (out )?(in|into).{0,12}sweat|sweating|clammy|went (hot and )?cold|sweat poured	all the waters|passed all the waters
+a-l duce capul	to be clever, to have a good head	Îl duce capul la orice, dar nu-l folosește spre bine.	(clever|bright|sharp|smart)|good head|quick (mind|wit)|no fool|brains	head carries him|his head takes
+a nu-i ajunge cu prăjina la nas	to be unbearably arrogant	De când a ajuns mare, nu-i mai ajungi cu prăjina la nas.	arrogant|stuck.{0,4}up|high and mighty|nose in the air|full of himself|too big for|conceited|unapproachable	pole|stick.{0,12}nose|rod
+a-l scoate din pepeni	to drive someone up the wall	M-a scos din pepeni cu întrebările lui.	drove me (mad|crazy|up the wall)|exasperat|infuriat|last nerve|lost my patience|beside myself	out of the (melons|watermelons)|out of his melons
+a se face frate cu dracul până trece puntea	to make an expedient alliance with evil until the danger passes	Unii se fac frate cu dracul până trec puntea.	expedient|make (a )?(deal|pact)|until.{0,20}(safe|past|over|danger)|befriend.{0,12}devil|whatever it takes|sup with the devil	brother with the devil until the bridge
+a-i veni de hac	to get the better of someone, to deal with them	Domnul îi va veni de hac celui rău.	deal with|get the better of|put.{0,12}(in his place|an end)|sort (him )?out|overcome|reckon with|settle	come of hac|hac
+a bate toba	to blab, to spread news about	Nu bate toba cu tot ce-ți spun.	blab|spread|broadcast|tell everyone|gossip|noise it about|shout.{0,12}from	beat the drum(?! up)|beating the drum
+a-i lua apa de la moară	to cut the ground from under someone	Răspunsul lui blând le-a luat apa de la moară.	(cut|took|pulled).{0,20}(ground|rug|wind)|disarm|took the sting|left.{0,12}nothing to say|deflat|silenced	water from the mill|took the water
+a umbla cu fofârlica	to be devious, to try to trick people	Nu umbla cu fofârlica, spune drept.	deviou|trick|underhand|dodg|shifty|sly|con|funny business|straight|beat around|plainly	fofarlica|fofârlica
+a-i pune capac	to top it all off, to be the last straw	Ce-a spus la urmă le-a pus capac la toate.	(topped|capped) it (all )?off|last straw|crowning|to cap it|icing|final blow|that did it	put a lid|placed a cap|put the cap
+a avea pitici pe creier	to have strange notions in one's head	Are pitici pe creier de când cu povestea aceea.	strange (notion|idea)|bee in (his|her) bonnet|obsess|fixat|odd ideas|not right in|hung up	dwarfs|midgets|gnomes.{0,12}brain
+a se uita ca vițelul la poarta nouă	to stare blankly and uncomprehendingly	Se uita ca vițelul la poarta nouă la tot ce-i spuneam.	star(e|ed|ing) (blankly|vacantly)|blank (look|stare)|no idea|uncomprehend|dumbly|like a (deer|lost)	calf.{0,12}(gate|new gate)
+a-i ține isonul	to go along with someone, to back them up uncritically	Ceilalți i-au ținut isonul fără să cerceteze.	went along with|backed (him|her) up|echo|chimed in|seconded|took (his|her) side|parroted	held the ison|kept the ison|drone
+a-i pica cu tronc	to take an immediate fancy to	I-a picat cu tronc de cum a văzut-o.	took a (fancy|liking)|fell for|smitten|taken with|struck by	fell with a thud|dropped with a
+a da colțul	to die	Bătrânul a dat colțul înainte de a apuca să-l vadă.	died|passed (away|on)|gone|breathed his last|kicked the bucket|departed|gave up the ghost	turned the corner|gave the corner|round the corner
+a-i pune gând rău	to mean harm to someone	Vrăjmașul îi pune gând rău celui credincios.	mean(s|t)? (him )?harm|ill (will|intent)|out to (get|harm)|designs on|plotting|wish(es)? (him )?evil|bears.{0,10}malice	put(s)? bad thought|bad thought on
+a scoate castanele din foc cu mâna altuia	to have someone else take the risk for you	Vrea să scoată castanele din foc cu mâna altuia.	cat's paw|someone else.{0,20}(risk|dirty work|hands)|use others|do (his|her) dirty work|pull.{0,20}chestnuts
+a-i face capul calendar	to confuse someone with endless talk	Mi-a făcut capul calendar cu poveștile lui.	(head|ears).{0,12}(spin|spinning|buzz|ring)|talked my ear off|confus|muddl|addl|bewilder|earful	made my head a calendar|head calendar
+a fi rupt din soare	to be strikingly beautiful	Fata aceea era ruptă din soare.	(strikingly |breathtaking)?beautiful|radiant|lovely|stunning|gorgeous|picture	torn from the sun|ripped from the sun
+a-l paște un necaz	trouble is looming over someone	Îl paște un necaz și nici nu bănuiește.	trouble.{0,12}(looming|ahead|coming|in store|awaits)|headed for|brewing|on the horizon|about to|lies in wait	graze|grazing|pasture
+a da în gropi	to be hopelessly absent-minded	De atâta grijă a început să dea în gropi.	absent.{0,4}minded|scatter.{0,4}brained|not (paying )?attention|in a daze|out of it|distracted|forgetful	fall(ing)? in(to)? (the )?(pits|holes|ditches)|gives in pits
+
+## REGIONAL
+păpușoi	corn, maize (Moldova; not "doll")	Anul acesta păpușoiul a dat bine pe câmp.	corn|maize	doll|puppet
+curechi	cabbage (Moldova / Transylvania)	Mama a pus curechi la murat pentru iarnă.	cabbage|sauerkraut
+cătană	soldier (Transylvania)	Bunicul a fost cătană în război.	soldier|serviceman|army
+harbuz	watermelon (Moldova)	Am adus un harbuz mare de la piață.	watermelon|melon
+barabule	potatoes (Moldova / Bucovina)	Au săpat barabulele toată ziua.	potato
+crumpene	potatoes (Transylvania)	Punem crumpene la fiert pentru cină.	potato
+picioici	potatoes (Maramureș)	Au cules picioicile de pe deal.	potato
+cucuruz	corn, maize (Transylvania / Banat)	Cucuruzul s-a copt devreme anul acesta.	corn|maize
+lubeniță	watermelon (Banat / Oltenia)	Ne-am răcorit cu o lubeniță rece.	watermelon|melon
+bostan	pumpkin (Moldova; elsewhere may be marrow)	Am copt bostan la cuptor.	pumpkin|squash|gourd
+pită	bread (Transylvania / Banat)	Femeia a scos pita din cuptor.	bread|loaf	pita
+prunc	small child, baby (Transylvania usage, broader than standard)	Pruncul plângea în brațele mamei.	child|baby|infant|little one
+ciubotă	boot (Moldova)	Și-a tras ciubotele și a plecat la biserică.	boot
+oleacă	a little, a bit (Moldova)	Mai stai oleacă, frate, nu pleca acum.	(a )?(little|bit|while|moment)|briefly
+niheam	a little, a bit (Banat / Transylvania)	Dă-mi niheam de apă, te rog.	(a )?(little|bit|drop)|some
+amu	now (Moldova / Transylvania)	Amu ce facem, oameni buni?	now|so then
+tulai	an exclamation of alarm or dismay (Transylvania)	Tulai, ce s-a întâmplat aici?	(oh|good|my).{0,10}(no|dear|lord|heavens|god)|goodness|heavens|help	tulai
+bade	respectful address to an older man (Transylvania)	Bade Ioane, vino încoace!	(uncle|mister|old|good).{0,10}(man|john|ion)|sir|friend	bade
+lele	address to an older woman (colloquial / regional)	Lele Mărie, ce mai faci?	(aunt|auntie|mrs|old|good).{0,10}(woman|mary|marie)|ma'am	lele
+zamă	soup, broth (Transylvania; standard zeamă/ciorbă)	Am mâncat o zamă caldă la prânz.	soup|broth
+perje	plums (Moldova)	Am cules perje pentru magiun.	plum
+poame	fruit, esp. grapes or plums depending on region	Toamna se strâng poamele din grădină.	fruit|grape|plum
+urdă	a fresh sweet whey cheese	La stână ne-au dat urdă proaspătă.	whey|curd|ricotta
+otavă	the second cut of hay	Au cosit otava înainte de ploaie.	(second|after).{0,12}(cut|crop|growth|mowing)|aftermath|rowen
+căpiță	a small haystack	Au strâns fânul în căpițe.	(hay)?(stack|cock|rick|pile|mound)
+a hodini	to rest (regional form of a se odihni)	Hai să ne hodinim oleacă la umbră.	rest|take a break|catch (our|your) breath
+a cerca	to try, to attempt (older/regional)	Am cercat de multe ori, dar n-am izbutit.	tr(y|ied)|attempt|endeavour|sought	search|examin
+muiere	woman, wife (rustic/regional; blunt in standard speech)	Muierea lui a fost o femeie credincioasă.	wife|woman
+om (Ardeal, = soț)	husband (Transylvanian usage of "om")	Omul ei lucrează la pădure.	husband
+a se cânta (Banat)	to lament, to complain (NOT "to sing")	Se cânta de necazul care-l ajunsese.	lament|complain|bewail|moan|grieve|cry(ing)? out	sing|sang|song
+mândru (despre lucruri)	fine, beautiful, splendid (Transylvania / Moldova, about things)	Ce mândră grădină aveți!	(beautiful|fine|lovely|splendid|handsome|grand)	proud
+sarsana	a bundle of luggage, baggage	Și-a luat sarsanaua și a plecat.	(bag|bundle|luggage|belongings|things|pack)	sarsana
+dughiană	a small shop (colloquial / regional)	A deschis o dughiană la marginea satului.	(small |little )?(shop|store|stall|booth)
+a chiti	to reckon, to aim, to think (Transylvania)	Am chitit că ajungem până seara.	(reckon|figur|thought|judg|estimat|aim|confident|expect|sure)
+ștergură	a woven towel or cloth (regional)	A pus ștergura curată pe masă.	(towel|cloth|linen)
+straiță	a shoulder bag, satchel (regional)	Avea o straiță pe umăr cu merinde.	(bag|satchel|pouch|sack|knapsack)
+merinde	provisions, food for a journey	Și-au luat merinde pentru drum.	(provision|food|victual|supplies|packed.{0,10}(lunch|meal))
+a se prinde (în horă)	to join in (the dance/the effort)	S-a prins și el în horă cu ceilalți.	join|took part|got involved|threw himself in	grabbed
+
+## CHURCH REGISTER
+neprihănire	righteousness (Cornilescu's standard word; NOT "sinlessness")	Fericiți cei flămânzi și însetați după neprihănire.	righteous	(sinless|innocen|blameless)ness|purity|impeccab
+adunare	assembly, congregation (Brethren/Pentecostal usage; not "meeting")	Adunarea s-a strâns duminică dimineața.	(assembly|congregation|church|gathering)	meeting|reunion|rally
+părtășie	fellowship, communion (koinonia)	Am avut o părtășie binecuvântată în seara aceea.	fellowship|communion|togetherness	partnership|shareholding|complicity
+pocăit	an evangelical/Protestant believer (Romanian in-group label, not merely "repentant")	În satul nostru sunt și pocăiți.	(evangelical|believer|born.{0,4}again|Protestant|repentant one)	repented person|the repentant\b
+a se pocăi	to repent and be converted	S-a pocăit acum zece ani și de atunci Îl slujește.	repent|convert|turned to (God|Christ|the Lord)|gave his life	regret|felt sorry|apolog
+zidire	edification, spiritual building-up	Cuvântul acesta este spre zidirea Bisericii.	edif|build(ing)? up|strengthen|encourag	construction|masonry|building site|wall
+îndemn	exhortation, urging	Vă las un îndemn: rămâneți în credință.	exhort|urg|encourag|appeal|admoni|charge	incentive|inducement|impulse|bonus
+fărădelege	iniquity, lawlessness	Domnul urăște fărădelegea.	iniquit|lawless|wickedness|transgression|sin	illegality|misdemean|offence against the law
+nădejde	hope (Cornilescu's word; slightly archaic)	Credința, nădejdea și dragostea rămân.	hope	trust|expectancy|reliance
+îndurare	mercy, compassion	Domnul este plin de îndurare.	merc|compassion|loving.{0,4}kindness|pity	endurance|forbearance|tolerance|patience
+mărturisire	confession (of faith or of sin)	Ne-am făcut mărturisirea înaintea Domnului.	confess|testimon|profession	statement|deposition|declaration to the
+slujire	ministry, service	Slujirea lui a fost o binecuvântare.	ministr|service|serving	employment|job|duty shift
+prezbiter	elder (church office)	Prezbiterii au fost rânduiți în adunare.	elder|presbyter	priest|presbyterian|prelate
+vestire	proclamation, preaching of the message	Vestirea Evangheliei a mers mai departe.	proclam|preach|proclamation|announcing|message	news bulletin|notification|announcement of a
+cântare	a hymn, a song of praise	Am cântat o cântare veche de laudă.	(hymn|song|singing|praise)	chant|chanting
+strană	the choir stall / where the singers stand	Corul s-a așezat în strană.	(choir|chancel).{0,10}(stall|seat|loft)|stall	strana
+har	grace (theological)	Prin har sunteți mântuiți.	grace	gift|talent|charm|favou?r alone
+osândă	condemnation, damnation	Nu mai este nicio osândă pentru cei în Hristos.	condemn|damnation|judgment against	punishment|penalty|sentence of a court
+ispravnic	steward (biblical usage)	Fiți ispravnici buni ai harului lui Dumnezeu.	steward	bailiff|sheriff|administrator|official
+râvnă	zeal, fervour	Avea râvnă pentru casa Domnului.	zeal|fervo|ardo|passion|earnest	envy|jealousy|greed

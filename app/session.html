@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Áron · Session</title>
+<!-- The session record, rendered. The server (app/server.py, "the session
+     record") fills the JSON block below with the page's record plus its own
+     facts, and saves the result as session.html; the same file is what the
+     ⭳ HTML button downloads. Self-contained: no network, opens from disk. -->
+<style>
+  :root { --text:#16181d; --soft:#555b66; --faint:#8a909b; --line:#d9dce1; --bg2:#f4f5f7;
+          --accent:#2457c5; --warn:#a15c00; --bad:#b3261e; --ok:#1d7a3e; }
+  * { box-sizing:border-box; }
+  body { font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; margin:2rem auto; max-width:1280px;
+         padding:0 1.2rem; color:var(--text); }
+  h1 { font-size:1.35rem; margin:0 0 .15rem; }
+  h2 { font-size:1.05rem; margin:2rem 0 .6rem; padding-bottom:.25rem; border-bottom:1px solid var(--line); }
+  .sub { color:var(--soft); margin:0 0 1rem; }
+  .cards { display:flex; flex-wrap:wrap; gap:.6rem; }
+  .card { border:1px solid var(--line); border-radius:8px; padding:.55rem .8rem; min-width:150px; background:#fff; }
+  .card b { display:block; font-size:1.25rem; font-variant-numeric:tabular-nums; }
+  .card span { color:var(--soft); font-size:.82rem; }
+  .card small { display:block; color:var(--faint); font-size:.78rem; margin-top:.15rem; }
+  table { border-collapse:collapse; width:100%; }
+  th, td { border:1px solid var(--line); padding:.4rem .55rem; vertical-align:top; text-align:left; }
+  th { background:var(--bg2); font-weight:600; font-size:.85rem; }
+  table.kv { width:auto; min-width:460px; }
+  table.kv td:first-child { color:var(--soft); white-space:nowrap; }
+  .cols { display:flex; flex-wrap:wrap; gap:1.5rem; align-items:flex-start; }
+  td.t, td.n { white-space:nowrap; color:var(--faint); font-variant-numeric:tabular-nums; width:1%; font-size:.85rem; }
+  td.src { width:38%; }
+  td.tgt { width:38%; }
+  .ear { display:block; color:var(--faint); font-size:.85rem; margin-top:.25rem; }
+  .ear i { font-style:normal; font-size:.72rem; border:1px solid var(--line); border-radius:4px;
+           padding:0 .3rem; margin-left:.35rem; white-space:nowrap; }
+  .ear.sent i { color:var(--accent); border-color:var(--accent); }
+  .was { display:block; color:var(--faint); text-decoration:line-through; font-size:.85rem; margin-top:.2rem; }
+  .was.sx { text-decoration:none; }
+  .chip { display:inline-block; font-size:.75rem; border-radius:5px; padding:0 .4rem; margin:0 .25rem .2rem 0;
+          border:1px solid var(--line); white-space:nowrap; }
+  .chip.by { color:var(--soft); }
+  .chip.llm { color:var(--accent); border-color:var(--accent); }
+  .chip.why { color:var(--warn); border-color:var(--warn); }
+  .chip.err { color:var(--bad); border-color:var(--bad); }
+  .chip.edit { color:var(--ok); border-color:var(--ok); }
+  .meta { color:var(--faint); font-size:.78rem; font-variant-numeric:tabular-nums; }
+  tr.ev td { background:var(--bg2); color:var(--soft); font-size:.85rem; }
+  tr.ev b { color:var(--text); font-weight:600; }
+  tr.err td.tgt { color:var(--bad); }
+  .controls { display:flex; gap:.8rem; align-items:center; margin:.2rem 0 .7rem; flex-wrap:wrap; }
+  .controls input[type=search] { padding:.3rem .5rem; min-width:260px; }
+  details pre { background:var(--bg2); padding:.8rem; overflow:auto; font-size:.8rem; max-height:60vh; }
+  .lv-warn { color:var(--warn); } .lv-err { color:var(--bad); }
+  .none { color:var(--faint); }
+  @media print { .controls { display:none; } body { margin:0; max-width:none; } }
+</style>
+</head>
+<body>
+<h1>Áron · Session</h1>
+<p class="sub" id="sub"></p>
+<div class="cards" id="cards"></div>
+
+<h2>Setup</h2>
+<div class="cols">
+  <div><h3 style="font-size:.95rem;margin:.2rem 0 .4rem">Settings when listening started</h3><table class="kv" id="cfg"></table></div>
+  <div><h3 style="font-size:.95rem;margin:.2rem 0 .4rem">Models and server</h3><table class="kv" id="models"></table></div>
+</div>
+
+<h2>Changes during the session</h2>
+<div id="changes"></div>
+
+<h2>Transcript</h2>
+<div class="controls">
+  <label>Show <select id="filter">
+    <option value="all">every row</option>
+    <option value="routed">sent on by the Router</option>
+    <option value="llm">translated by a model</option>
+    <option value="ears">with an extra ear's reading</option>
+    <option value="edited">edited by hand</option>
+    <option value="err">errors</option>
+  </select></label>
+  <label><input type="checkbox" id="showEv" checked> settings changes in line</label>
+  <input type="search" id="q" placeholder="Search original or translation…">
+  <span class="meta" id="count"></span>
+</div>
+<table id="tx"><thead><tr><th>#</th><th>Sealed</th><th>Original</th><th>Translation</th><th>Tags</th></tr></thead><tbody></tbody></table>
+
+<h2>Event log</h2>
+<details><summary id="logsum">Event log</summary><pre id="log"></pre></details>
+
+<script type="application/json" id="session">__SESSION_JSON__</script>
+<script>
+(function(){
+const S=JSON.parse(document.getElementById('session').textContent);
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const p2=n=>String(n).padStart(2,'0');
+const hms=t=>{ if(!t) return ''; const d=new Date(t); return p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSeconds()); };
+const dur=ms=>{ const s=Math.round(ms/1000), h=Math.floor(s/3600), m=Math.floor(s%3600/60); return (h?h+' h ':'')+m+' min'; };
+const val=v=>v===true?'on':v===false?'off':(v==null||v==='')?'—':String(v);
+const pct=(a,b)=>b?Math.round(100*a/b)+'%':'—';
+const sec=ms=>(ms/1000).toFixed(1)+' s';
+function quant(xs,q){ if(!xs.length) return null; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1,Math.floor(q*s.length))]; }
+
+const rows=(S.rows||[]).filter(r=>r.src||r.tgt||r.error), events=S.events||[], srv=S.server||{};
+const last=Math.max(S.saved||0,...rows.map(r=>r.shown||r.heard||0));
+document.title='Áron · Session '+new Date(S.started).toLocaleString();
+$('sub').textContent=new Date(S.started).toLocaleString()+' – '+hms(last)+' · '+dur(last-S.started)
+  +' · '+rows.length+' rows · Áron '+(srv.version||'?');
+
+// ---- summary ----------------------------------------------------------------
+const shown=rows.filter(r=>r.tgt && !r.error);
+const byCount={}; for(const r of shown) byCount[r.by||'?']=(byCount[r.by||'?']||0)+1;
+const routed=rows.filter(r=>r.route&&r.route.sent);
+const reasons={}; for(const r of routed) reasons[r.route.why||'?']=(reasons[r.route.why||'?']||0)+1;
+const checked=rows.filter(r=>r.route&&!r.route.timeout&&!r.route.error).length;
+const timeouts=rows.filter(r=>r.route&&(r.route.timeout||r.route.error)).length;
+const kept=routed.filter(r=>r.route.kept).length;
+const clueCut=(srv.warnings||[]).filter(w=>w.kind==='clue').length;   // replies that copied the Router's clue (cut by the server)
+const withEars=rows.filter(r=>r.ears&&Object.keys(r.ears).length);
+const earsSent=rows.filter(r=>r.ears_sent&&Object.keys(r.ears_sent).length);
+const edited=rows.filter(r=>r.edits&&r.edits.length);
+const errors=rows.filter(r=>r.error||r.src_kind==='err');
+const lags=shown.filter(r=>r.word_lag_ms!=null).map(r=>r.word_lag_ms);
+const cost=srv.cost&&srv.cost.total;
+const card=(big,label,small)=>'<div class="card"><b>'+esc(big)+'</b><span>'+esc(label)+'</span>'+(small?'<small>'+esc(small)+'</small>':'')+'</div>';
+let cards=card(shown.length,'captions shown',Object.entries(byCount).sort((a,b)=>b[1]-a[1]).map(([k,n])=>k+' '+n+' ('+pct(n,shown.length)+')').join(' · '));
+if(checked||routed.length) cards+=card(routed.length+' of '+checked,'sent on by the Router ('+pct(routed.length,checked)+')',
+  Object.entries(reasons).map(([k,n])=>k+' '+n).join(' · ')+(kept?' · '+kept+' kept Soniox (translator slow)':'')+(timeouts?' · '+timeouts+' checks timed out':'')
+  +(clueCut?' · '+clueCut+' copied the clue (cut)':''));
+if(withEars.length) cards+=card(withEars.length,'rows with an extra ear\'s reading',earsSent.length+' given to the translator');
+if(lags.length) cards+=card(sec(quant(lags,.5)),'spoken → on screen, median','per row, its middle word · p90 '+sec(quant(lags,.9)));
+cards+=card(edited.length,'edited by hand');
+if(errors.length) cards+=card(errors.length,'errors');
+if(cost!=null) cards+=card('$'+cost.toFixed(2),'estimated spend','since the server started');
+$('cards').innerHTML=cards;
+
+// ---- setup -------------------------------------------------------------------
+const kv=o=>Object.entries(o||{}).map(([k,v])=>'<tr><td>'+esc(k)+'</td><td>'+esc(val(v))+'</td></tr>').join('');
+$('cfg').innerHTML=kv(S.config_start)||'<tr><td class="none">not recorded</td></tr>';
+const m={};
+if(srv.stt) m['Speech-to-text']=srv.stt.provider+' '+srv.stt.model;
+for(const e of srv.ears||[]) m['Extra ear: '+e.label]=e.model+(e.configured?'':' (no key)');
+if(srv.ears_enabled===false) m['Extra ears']='off (CT_EARS=0)';
+if(srv.router) m['Router']=srv.router.model+' · '+srv.router.timeout_ms+' ms cap'+(srv.router.available?'':' (no OpenAI key)');
+m['Translator default']=srv.translator_default; m['Hearing fallback']=srv.hearing_fallback;
+const used=[...new Set(rows.filter(r=>r.by&&r.by!=='Soniox').map(r=>r.by))];
+if(used.length) m['Translators used']=used.join(', ');
+for(const [k,v] of Object.entries(srv.model_p50_s||{})) if(v!=null) m['Median '+k]=v+' s';
+for(const p of srv.model_pins||[]) if(p.status&&p.status!=='ok') m['Pin '+(p.model||'?')]=p.status;
+if(srv.usage) m['Usage']=srv.usage.stt_min+' STT min · '+srv.usage.llm_calls+' LLM calls · '+srv.usage.tts_chars+' TTS chars';
+m['Browser']=(S.page&&S.page.ua||'').replace(/^Mozilla\/5.0 /,'');
+$('models').innerHTML=kv(m);
+
+// ---- changes -----------------------------------------------------------------
+function evText(e){
+  if(e.kind==='set') return '<b>'+esc(e.key)+'</b>: '+esc(val(e.from))+' → '+esc(val(e.to));
+  if(e.kind==='listen') return e.on?'<b>Listening started</b>':'<b>Listening stopped</b>';
+  if(e.kind==='mode') return '<b>Service mode</b> → '+esc(e.mode)+' ('+esc(e.by)+(e.why?', '+esc(e.why):'')+')';
+  if(e.kind==='clear') return '<b>Captions cleared</b> on screen (the record keeps the rows)';
+  return esc(e.kind);
+}
+const sets=events;
+$('changes').innerHTML=sets.length
+  ? '<table><thead><tr><th>Time</th><th>What</th></tr></thead><tbody>'
+    +sets.map(e=>'<tr><td class="t">'+hms(e.at)+'</td><td>'+evText(e)+'</td></tr>').join('')+'</tbody></table>'
+  : '<p class="none">No settings changed after listening started.</p>';
+
+// ---- transcript ----------------------------------------------------------------
+function tags(r){
+  const out=[];
+  if(r.error) out.push('<span class="chip err">error: '+esc(r.error)+'</span>');
+  if(r.by) out.push('<span class="chip '+(r.by==='Soniox'?'by':'llm')+'">'+esc(r.by)+'</span>');
+  if(r.route){
+    const x=r.route;
+    if(x.sent) out.push('<span class="chip why">Router: '+esc(x.why)+(x.kept?' · Soniox kept':'')+'</span>');
+    else if(x.timeout) out.push('<span class="chip">Router check timed out</span>');
+    else if(x.error) out.push('<span class="chip err">Router: '+esc(x.error)+'</span>');
+    const f=v=>v==null?'–':(+v).toFixed(2);
+    if(!x.timeout&&!x.error) out.push('<div class="meta">bad '+f(x.bad)+' · mis-hear '+f(x.sl)+' · cuss '+f(x.sens)+(x.ms!=null?' · '+x.ms+' ms':'')+'</div>');
+  }
+  if(r.tag) out.push('<span class="chip">voice tag: '+esc(r.tag)+'</span>');
+  if(r.batch) out.push('<span class="chip">'+r.batch+' rows in one call</span>');
+  if(r.edits&&r.edits.length) out.push('<span class="chip edit">edited '+hms(r.edits[r.edits.length-1].at)+'</span>');
+  const t=[];
+  if(r.word_lag_ms!=null) t.push('spoken → shown '+sec(r.word_lag_ms));
+  if(r.heard&&r.shown) t.push('sealed → shown '+sec(r.shown-r.heard));
+  if(r.mt_s!=null) t.push('translator '+r.mt_s+' s');
+  if(r.hold_ms!=null) t.push('hold '+sec(r.hold_ms));
+  if(r.replayed) t.push(r.replayed+' repeated words cut');
+  if(t.length) out.push('<div class="meta">'+t.join(' · ')+'</div>');
+  return out.join('');
+}
+function rowHtml(r){
+  let src=esc(r.src||'');
+  const sent=r.ears_sent||{};
+  for(const [label,text] of Object.entries(r.ears||{}))
+    src+='<span class="ear'+(sent[label]!=null?' sent':'')+'">'+esc(sent[label]!=null?sent[label]:text)+'<i>'+esc(label)+(sent[label]!=null?' · sent':'')+'</i></span>';
+  for(const [label,text] of Object.entries(sent)) if(!(r.ears||{})[label])
+    src+='<span class="ear sent">'+esc(text)+'<i>'+esc(label)+' · sent</i></span>';
+  let tgt=r.joined?'<span class="none">translated with row '+r.joined+'</span>':esc(r.tgt||'');
+  if(r.edits&&r.edits.length) tgt+='<span class="was">'+esc(r.edits[0].from)+'</span>';
+  if(r.soniox_en) tgt+='<span class="was sx">Soniox: '+esc(r.soniox_en)+'</span>';
+  return '<tr class="'+(r.error?'err':'')+'"><td class="n">'+r.n+'</td><td class="t">'+hms(r.heard||r.opened)
+    +(r.src_lang?'<div class="meta">'+esc(r.src_lang)+(r.lang?' → '+esc(r.lang):'')+'</div>':'')
+    +'</td><td class="src">'+src+'</td><td class="tgt">'+tgt+'</td><td>'+tags(r)+'</td></tr>';
+}
+const keep={
+  all:()=>true,
+  routed:r=>r.route&&r.route.sent,
+  llm:r=>r.by&&r.by!=='Soniox',
+  ears:r=>(r.ears&&Object.keys(r.ears).length)||(r.ears_sent&&Object.keys(r.ears_sent).length),
+  edited:r=>r.edits&&r.edits.length,
+  err:r=>r.error||r.src_kind==='err',
+};
+function render(){
+  const f=keep[$('filter').value], q=$('q').value.trim().toLowerCase(), withEv=$('showEv').checked;
+  const list=rows.filter(r=>f(r) && (!q || ((r.src||'')+' '+(r.tgt||'')).toLowerCase().includes(q)));
+  const items=list.map(r=>({at:r.heard||r.opened,html:rowHtml(r)}));
+  if(withEv && !q) for(const e of events) items.push({at:e.at,ev:true,html:'<tr class="ev"><td></td><td class="t">'+hms(e.at)+'</td><td colspan="3">'+evText(e)+'</td></tr>'});
+  items.sort((a,b)=>a.at-b.at);
+  document.querySelector('#tx tbody').innerHTML=items.map(i=>i.html).join('');
+  $('count').textContent=list.length+' of '+rows.length+' rows';
+}
+['filter','showEv','q'].forEach(id=>$(id).addEventListener('input',render));
+render();
+
+// ---- log -----------------------------------------------------------------------
+// The page's lines, with the server's warnings in among them by time.
+const L=[...(S.log||[]),...(srv.warnings||[])].sort((a,b)=>a.at-b.at);
+$('logsum').textContent='Event log ('+L.length+' lines'+((S.log||[]).length>=10000?', oldest dropped':'')+')';
+$('log').innerHTML=L.map(e=>'<span class="lv-'+esc(e.level)+'">'+hms(e.at)+'  '+esc(e.msg)+'</span>').join('\n');
+})();
+</script>
+</body>
+</html>

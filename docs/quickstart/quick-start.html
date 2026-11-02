@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Áron quick start guide</title>
+<style>
+  @page { size: Letter; margin: 0.6in 0.65in 0.65in; }
+  :root { --ink:#1d2433; --soft:#5b6476; --accent:#4f5b93; --pin:#e0533d; --line:#dfe3ec; --tint:#f3f5fa; }
+  * { box-sizing: border-box; }
+  body { margin:0; font: 10.5pt/1.5 "Segoe UI", system-ui, sans-serif; color:var(--ink); background:#fff; }
+  h1 { font-size: 26pt; margin: 0; letter-spacing: -.01em; }
+  h2 { font-size: 15pt; margin: 22px 0 6px; color: var(--accent); break-after: avoid; }
+  h2 .part { display:inline-block; min-width: 26px; height: 26px; border-radius: 6px; background: var(--accent);
+             color: #fff; text-align: center; font-size: 12pt; line-height: 26px; margin-right: 8px; padding: 0 5px; }
+  h3 { font-size: 11.5pt; margin: 14px 0 3px; break-after: avoid; }
+  p { margin: 4px 0 8px; }
+  .lede { font-size: 12pt; color: var(--soft); margin: 4px 0 14px; }
+  .newpage { break-before: page; }
+  .avoid { break-inside: avoid; }
+  figure { margin: 8px 0 12px; break-inside: avoid; }
+  figure .frame { position: relative; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  figure img { display: block; width: 100%; }
+  figcaption { color: var(--soft); font-size: 9pt; margin-top: 4px; }
+  .pin { position:absolute; transform: translate(-50%,-50%); width: 22px; height: 22px; border-radius: 50%;
+         background: var(--pin); color:#fff; font: 700 10.5pt/22px "Segoe UI", sans-serif; text-align:center;
+         box-shadow: 0 0 0 2px #fff; }
+  .n { display:inline-block; width: 19px; height: 19px; border-radius: 50%; background: var(--pin); color: #fff;
+       font: 700 9pt/19px "Segoe UI", sans-serif; text-align: center; margin-right: 4px; vertical-align: 1px; }
+  .flow { display: flex; align-items: center; gap: 6px; margin: 10px 0 14px; font-size: 9.5pt; }
+  .flow div { flex: 1; text-align: center; border: 1px solid var(--line); border-radius: 8px; padding: 7px 4px;
+              background: var(--tint); }
+  .flow div b { display:block; font-size: 10.5pt; }
+  .flow span { color: var(--soft); font-size: 13pt; }
+  .tip { background: var(--tint); border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0;
+         padding: 7px 11px; margin: 8px 0 10px; break-inside: avoid; }
+  ol.steps { padding-left: 22px; margin: 4px 0 8px; }
+  ol.steps li { margin-bottom: 5px; }
+  table { border-collapse: collapse; width: 100%; margin: 6px 0 10px; font-size: 9.6pt; break-inside: avoid; }
+  th, td { text-align: left; vertical-align: top; padding: 5px 7px; border-bottom: 1px solid var(--line); }
+  th { background: var(--tint); font-weight: 600; }
+  code, kbd { font: 9.3pt Consolas, monospace; background: var(--tint); padding: 0 4px; border-radius: 3px; }
+  kbd { border: 1px solid var(--line); }
+  .side { display: grid; grid-template-columns: 300px 1fr; gap: 18px; align-items: start; }
+  .side figure { margin-top: 2px; }
+  .crop { overflow: hidden; }
+  .toc { columns: 2; column-gap: 28px; padding-left: 18px; margin: 6px 0; }
+  .toc li { margin-bottom: 2px; }
+  .muted { color: var(--soft); }
+  /* the Notepad and Save-as pictures (drawn, not screenshots: the keys are fake) */
+  .win { border: 1px solid #b9bfcc; border-radius: 6px; overflow: hidden; background: #fff; break-inside: avoid;
+         box-shadow: 0 2px 8px rgba(0,0,0,.08); font-family: "Segoe UI", sans-serif; }
+  .win .bar { display: flex; justify-content: space-between; align-items: center; background: #eef0f4;
+              padding: 4px 10px; font-size: 9pt; color: #333; }
+  .win .bar .ctl { letter-spacing: 10px; color: #666; }
+  .win .menu { font-size: 8.8pt; color: #444; padding: 3px 10px; border-bottom: 1px solid #e3e6ec; word-spacing: 10px; }
+  .win .text { font: 9.6pt/1.9 Consolas, monospace; padding: 8px 12px 10px 36px; color: #111; position: relative; }
+  .win .text .k { color: #1d2433; } .win .text .v { background: #fff3c4; }
+  .win .text .pin, .save .pin { position: static; display: inline-block; transform: none; width: 18px; height: 18px;
+         font-size: 9pt; line-height: 18px; margin-left: 6px; vertical-align: 1px; }
+  .save { display: grid; grid-template-columns: 110px 1fr; gap: 5px 10px; padding: 9px 12px; font-size: 9.4pt; align-items: center; }
+  .save .field { border: 1px solid #b9bfcc; border-radius: 3px; padding: 2px 7px; background: #fff; font-family: Consolas, monospace; }
+  .keys-legend { margin: 6px 0 10px; padding-left: 0; list-style: none; font-size: 9.6pt; }
+  .keys-legend li { margin-bottom: 3px; }
+</style>
+</head>
+<body>
+
+<h1>Áron — quick start guide</h1>
+<p class="lede">Live captions and spoken translation for a church service. Someone speaks; a moment later the
+translation appears on the screen and, if you like, is spoken aloud in another language.</p>
+
+<div class="flow avoid">
+  <div><b>Microphone</b>the speaker</div><span>→</span>
+  <div><b>1 · Speech-to-text</b>writes down what was said</div><span>→</span>
+  <div><b>2 · Translation</b>into the language you pick</div><span>→</span>
+  <div><b>Screen</b>captions on the projector</div><span>+</span>
+  <div><b>3 · Voice</b>spoken, optional</div>
+</div>
+
+<p>Áron runs on an ordinary computer. It does no heavy lifting itself: it sends the sound to cloud services that
+recognise speech, translate and speak, and you pay each service for what you use — typically a few cents to a few
+dollars for a service. Each service is unlocked by an <b>API key</b>: a long password the service gives you when you
+open an account, which you paste into Áron once.</p>
+
+<figure>
+  <div class="frame">
+    <img src="overview.png" alt="Áron's main window">
+    <span class="pin" style="left:9.5%;top:31%">1</span>
+    <span class="pin" style="left:23.2%;top:31%">2</span>
+    <span class="pin" style="left:43.1%;top:31%">3</span>
+    <span class="pin" style="left:52.6%;top:31%">4</span>
+    <span class="pin" style="left:74.4%;top:31%">5</span>
+    <span class="pin" style="left:83.3%;top:31%">6</span>
+    <span class="pin" style="left:93.1%;top:31%">7</span>
+    <span class="pin" style="left:20%;top:8.5%">8</span>
+    <span class="pin" style="left:1%;top:52.3%">9</span>
+    <span class="pin" style="left:49.6%;top:52.3%">10</span>
+    <span class="pin" style="left:80.7%;top:14%">$</span>
+    <span class="pin" style="left:93.8%;top:14%">?</span>
+  </div>
+  <figcaption><span class="n">1</span>Start / stop listening · <span class="n">2</span>the language to translate into ·
+    <span class="n">3</span>Mic: mute it while the band plays · <span class="n">4</span>Speak the translation aloud ·
+    <span class="n">5</span>open the projector window · <span class="n">6</span>clear the projector ·
+    <span class="n">7</span><b>Settings</b> for everything else · <span class="n">8</span>one light for each part of
+    the pipeline: grey is idle, green working, orange worth a look, red broken (hold the mouse over one for details) ·
+    <span class="n">9</span>what was said · <span class="n">10</span>the translation ·
+    <span class="n">$</span>what this run has cost so far · <span class="n">?</span><b>Help</b> opens this guide</figcaption>
+</figure>
+
+<h3>What you need</h3>
+<ul>
+  <li>A Windows computer with an internet connection (Mac and Linux work too, from the command line).</li>
+  <li>A microphone, or better, a feed from the sound desk plugged into the computer.</li>
+  <li>A <b>Soniox</b> account. That one key does all three stages — speech-to-text, translation, and a
+      spoken voice. Everything else in this guide is optional and comes later.</li>
+</ul>
+<div class="tip"><b>The minimal setup is one key.</b> With just a Soniox key you get live captions
+(Soniox's own translation), and spoken translation if you want it — nothing else to sign up for. Parts 5
+and 6 add better translation and fewer mistakes, but none of them are needed to start.</div>
+
+<h3>In this guide</h3>
+<ol class="toc">
+  <li>Set up (about 10 minutes)</li>
+  <li>Your first service</li>
+  <li>Captions on the big screen</li>
+  <li>Spoken translation</li>
+  <li>Better translation: add an AI model</li>
+  <li>Fewer mistakes: the Decision Router and extra ears</li>
+  <li>Fine-tuning</li>
+  <li>What it costs</li>
+  <li>Keeping the service</li>
+  <li>Troubleshooting and shortcuts</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 class="newpage"><span class="part">1</span>Set up (about 10 minutes)</h2>
+
+<h3>Get a Soniox key</h3>
+<ol class="steps">
+  <li>Go to <b>console.soniox.com</b> and create an account.</li>
+  <li>Add a payment method (speech-to-text costs about <b>$0.12 an hour</b>).</li>
+  <li>Create an <b>API key</b> and copy it. Keep it private, like a password.</li>
+</ol>
+
+<h3>Start Áron for the first time</h3>
+<p>Most people get Áron as a single program file, <b>church-translate.exe</b>. It needs nothing installed.</p>
+<ol class="steps">
+  <li>Make a folder for Áron, for example <b>Documents\Aron</b>, and put <b>church-translate.exe</b> in it.</li>
+  <li>Double-click <b>church-translate.exe</b>. (Windows may warn the first time, naming the publisher: choose
+      <b>More info → Run anyway</b>.) A black console window opens.</li>
+  <li>The first time, Áron makes its settings file, <code>.env</code>, in the same folder and opens it in
+      <b>Notepad</b>. Find the line <code>SONIOX_API_KEY=</code> and paste your key straight after the
+      <code>=</code> with <kbd>Ctrl</kbd>+<kbd>V</kbd>.</li>
+  <li>Save with <kbd>Ctrl</kbd>+<kbd>S</kbd> and close Notepad. Áron carries on by itself, and your web browser opens
+      at <code>http://localhost:5000</code>: that page <i>is</i> Áron.</li>
+</ol>
+<h3>Your keys: the <code>.env</code> file</h3>
+<p><code>.env</code> (say “dot env”) is a plain text file that holds your keys. Áron reads it every time it starts.
+Each key is unique to your account — it is how the service knows who to bill — so treat the file like a password:
+keep it on the church's computer, and never email or post it. Each line is a name, an equals sign, and the key:</p>
+
+<div class="win">
+  <div class="bar"><span>.env — Notepad</span><span class="ctl">–□✕</span></div>
+  <div class="menu">File Edit Format View Help</div>
+  <div class="text">
+    <span class="k">SONIOX_API_KEY</span>=<span class="v">7c1e94b0EXAMPLE5a2d4f8e9b3c6a1d0e7f52b4</span><span class="pin">2</span><br>
+    <span class="k">ANTHROPIC_API_KEY</span>=<span class="v">sk-ant-api03-EXAMPLE-Xq7mT2vR9pLk4wNz</span><br>
+    <span class="k">OPENAI_API_KEY</span>=<span class="pin">3</span>
+    <span class="pin" style="position:absolute;left:4px;top:11px;margin:0">1</span>
+  </div>
+</div>
+<ul class="keys-legend">
+  <li><span class="n">1</span><b>The name</b>, already in the file Áron made. Leave it exactly as it is.</li>
+  <li><span class="n">2</span><b>Your key</b>, pasted straight after the <code>=</code> with <kbd>Ctrl</kbd>+<kbd>V</kbd>.
+      No spaces and no quotes around it. (These keys are made up.)</li>
+  <li><span class="n">3</span>Nothing after the <code>=</code>? That service is simply switched off. Only the Soniox line
+      is needed; the others come in Part 5.</li>
+</ul>
+
+<p class="muted">To change a key later, or add one from Part 5, right-click <code>.env</code> →
+<b>Open with → Notepad</b>, edit the line, save, and restart Áron. If you start Áron with the Soniox line still
+empty, it opens the file for you again.</p>
+
+<div class="tip">Keep the black console window open while you use Áron — closing it stops the app. Your keys stay
+in <code>.env</code> on this computer and are sent only to their own service.</div>
+<p class="muted"><b>Running from the source folder instead?</b> (for developers, or a copy of the whole Áron
+folder rather than the .exe) Install <b>Python 3.12</b> from python.org with “Add python.exe to PATH” ticked, then
+double-click <b>Start Church Translate.bat</b>. The first time, it asks for your keys and writes <code>.env</code>
+for you, and spends about a minute installing what it needs.</p>
+
+<!-- ============================================================ -->
+<h2><span class="part">2</span>Your first service</h2>
+<ol class="steps">
+  <li><b>Pick the language to translate into.</b> Click the language button (<span class="n">2</span> above, it
+      reads <b>→ English</b>) and tick one language. Áron recognises whatever language is spoken and translates it
+      into this one. Tick <b>two</b> languages for a bilingual service: each sentence is translated into whichever
+      of the two is <i>not</i> being spoken.</li>
+  <li><b>Check the microphone.</b> Click <b>Settings</b> (<span class="n">7</span>) and, under <b>1 Listen</b>, choose
+      your microphone or sound-desk feed. When someone speaks, the small level bar under the buttons should move well
+      into the middle; if it barely moves, raise <b>Gain</b>. Close Settings with <kbd>Esc</kbd> or a click outside it.</li>
+  <li><b>Press Start listening</b> (or the <kbd>Space</kbd> bar) and speak. The <b>Original</b> column fills with
+      what was said, and a moment later the <b>Translation</b> column fills with the translation.</li>
+  <li><b>Press Stop to finish.</b> If nobody speaks for three hours, Áron stops by itself so it cannot run up a
+      bill overnight.</li>
+</ol>
+<p>That is the core pipeline — speech in, translation out. To also hear it spoken aloud, go to
+<b>Part 4</b>; for noticeably better translation, <b>Part 5</b>.</p>
+<div class="tip">With just the Soniox key, Áron uses Soniox's own translation (shown as <b>none, fast</b> in the
+Model menu, under Settings → 2 Translate). It is quick and fine for plain preaching, but it translates idioms word for word. Part 5 shows how to
+get much better translations.</div>
+
+<!-- ============================================================ -->
+<h2><span class="part">3</span>Captions on the big screen</h2>
+<ol class="steps">
+  <li>Click <b>Project</b> (<span class="n">5</span>). A plain black caption window opens, and the
+      <b>Projector</b> light turns green.</li>
+  <li>Drag it onto the projector or TV, click inside it, and press <kbd>F11</kbd> to fill the screen.</li>
+  <li>New translations type themselves onto the bottom of the screen as they arrive, and older lines scroll up.</li>
+</ol>
+<figure>
+  <div class="frame"><img src="projector.png" alt="The projector window showing two lines of English captions"></div>
+  <figcaption>The projector window. It only ever shows the translation.</figcaption>
+</figure>
+<div class="side">
+  <figure><div class="frame"><img src="wall.png" alt="The Wall settings"></div></figure>
+  <p style="margin-top:0"><b>Clear wall</b> (<span class="n">6</span>, or <kbd>W</kbd>) wipes what the room is reading — for a
+  wrong line, or between parts of the service — without touching your transcript. The bin above the Translation
+  column empties the two columns in the main window. Under <b>Settings → 3 Wall</b> you set how fast the words type
+  out, how long each line holds, and whether the screen keeps 2 or 3 lines (2 are a little larger).</p>
+</div>
+<p class="muted">Also possible, set up once in <code>.env</code>: captions on your church website for phones
+(<code>CT_PUBLISH_URL</code>), or inside ProPresenter (<code>CT_PROPRESENTER_URL</code>). The comments in
+<code>.env.example</code> walk through both; once set up, each gets a switch under <b>Settings → 3 Wall</b>, and the
+website a <b>Web</b> light that turns red if captions stop reaching it.</p>
+
+<!-- ============================================================ -->
+<h2><span class="part">4</span>Spoken translation</h2>
+<div class="side">
+  <figure><div class="frame"><img src="voice.png" alt="The Voice settings"></div></figure>
+  <div>
+    <p>Press <b>Speak</b> (<span class="n">4</span>): every translation is also read aloud, a second or two after it
+    appears (the captions never wait for it). With your Soniox key this works straight away — no extra account to
+    open. The voice is chosen under <b>Settings → 4 Voice</b>.</p>
+    <ul>
+      <li><b>Speech</b> picks the voice service. <b>Soniox v2</b> needs no extra key (it rides on the key you already
+          have) and costs about $0.70 an hour of speech. <b>ElevenLabs v4</b> and <b>v4 Turbo</b> have more natural
+          voices; they need their own key.</li>
+      <li><b>Output</b> sends the voice to a particular device — for example a USB sound card feeding an
+          assistive-listening transmitter, so listeners hear the translation on headphones.</li>
+      <li><b>Capture</b>, beside <b>Speaker's own voice</b>, records the speaker for 30 seconds at soundcheck, so the translation is spoken in
+          their own voice. Only with their consent.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2 class="newpage"><span class="part">5</span>Better translation: add an AI model</h2>
+<p>A large language model (an “LLM”, like Claude or ChatGPT) translates far better than Soniox's built-in
+translator. It knows idioms, regional expressions and Scripture: on a test of 21 Romanian idioms, Soniox got 2 right
+and Claude Haiku 16. Any one provider is enough.</p>
+
+<table>
+  <tr><th>Provider</th><th>Get a key at</th><th>Line to add to <code>.env</code></th><th>Models it adds</th></tr>
+  <tr><td>Anthropic</td><td>console.anthropic.com</td><td><code>ANTHROPIC_API_KEY=…</code></td><td>claude-haiku-4-5 (the default), claude-haiku-5-5, claude-sonnet-5-5</td></tr>
+  <tr><td>OpenAI</td><td>platform.openai.com</td><td><code>OPENAI_API_KEY=…</code></td><td>gpt-6-sol, gpt-6.1-terra, gpt-6-luna — and unlocks the Decision Router (Part 6)</td></tr>
+  <tr><td>Google</td><td>aistudio.google.com</td><td><code>GEMINI_API_KEY=…</code></td><td>gemini-3.8-flash, gemini-3.5-flash-lite</td></tr>
+  <tr><td>xAI</td><td>console.x.ai</td><td><code>XAI_API_KEY=…</code></td><td>Grok models</td></tr>
+</table>
+<p class="muted">An Anthropic API key is billed separately from a Claude.ai subscription; the same goes for OpenAI and ChatGPT.</p>
+
+<h3>Add the key</h3>
+<ol class="steps">
+  <li>Close the black console window to stop Áron.</li>
+  <li>In the Áron folder, open <code>.env</code> with Notepad. Add the line from the table with your key after the
+      <code>=</code>, and save.</li>
+  <li>Start Áron again. The provider's models are now available in the <b>Model</b> menu (Settings → 2 Translate).</li>
+</ol>
+
+<div class="side">
+  <figure><div class="frame"><img src="translate.png" alt="The Translate settings: Model and the Decision Router"></div></figure>
+  <div>
+    <h3 style="margin-top:0">Which model?</h3>
+    <ul>
+      <li><b>claude-haiku-4-5</b> — the default. Fast (well under a second a line) and reliable.</li>
+      <li><b>gpt-6-sol</b> and <b>gpt-6.1-terra</b> (fast tier) — the best at repairing a misheard word from context.
+          Good partners for the Decision Router.</li>
+      <li><b>claude-sonnet-5-5</b> — strong at context (who "sunt" or "am mers" refers to), about as fast as Sol.
+          It runs with its thinking turned off, which stopped it putting its reasoning into captions.</li>
+      <li><b>none, fast</b> — Soniox's own translation, no model at all. The fastest and cheapest.</li>
+    </ul>
+  </div>
+</div>
+<p>You can switch model in the middle of a service; the next line uses the new one. Models whose key is missing are
+greyed out. The model's light at the top turns green as it answers; its hollow second light shows whether the
+provider's prompt cache is saving you money.</p>
+
+<!-- ============================================================ -->
+<h2 class="newpage"><span class="part">6</span>Fewer mistakes: the Decision Router and extra ears</h2>
+<p>Both need an <b>OpenAI</b> key.</p>
+<h3>The Decision Router</h3>
+<p>Turn it on under <b>Settings → 2 Translate</b>, right under <b>Model</b> (picture in Part 5). Soniox's quick
+translation of each phrase goes on screen straight away — the fastest captions Áron can give — but a small, fast AI
+(gpt-6-luna) checks every phrase first, in about a fifth of a second. When it doubts one — a clumsy or wrong
+translation, an unsuitable word, or a word that was probably misheard — that phrase goes to the model chosen in
+<b>Model</b> to be redone. On two recorded services it cut the lines not fit for the screen to about a third (from 9%
+to 3%, and from 5% to 2%). Its light at the top (<b>gpt-6-luna</b>) is dimmed while it is off. How doubtful a phrase
+must be is <code>CT_ROUTER_THRESHOLD</code> in <code>.env</code> (default 0.3; lower sends more lines on).</p>
+<div class="side">
+  <figure><div class="frame"><img src="listen.png" alt="The Listen settings, with one extra ear picked"></div></figure>
+  <div>
+    <h3 style="margin-top:0">Extra ears</h3>
+    <p>Speech-to-text sometimes mishears a word: a place name, a sound-alike. Extra ears (under <b>Settings → 1
+    Listen</b>) are second and third recognisers — ElevenLabs, OpenAI live, Gemini Live — listening to the same
+    audio. Their versions appear in grey under each line, and when the Decision Router suspects a mishearing, the
+    translator is shown what each ear heard. On one sermon, 26 of 27 misheard words came out right with all three
+    ears, against 20 with none. A doubtful phrase waits up to 0.7 s for them (<code>CT_EAR_WAIT_MS</code>).</p>
+  </div>
+</div>
+<div class="tip">Each ticked ear listens to the whole service and is billed for it (about $0.40–1.00 an hour each).
+Start with <b>Gemini Live</b> alone: it was the most helpful single ear.</div>
+
+<!-- ============================================================ -->
+<h2><span class="part">7</span>Fine-tuning</h2>
+<h3>Pace — how much text is translated at a time</h3>
+<table>
+  <tr><th>Stop</th><th>Words per piece</th><th>Good for</th></tr>
+  <tr><td><b>Pronto</b></td><td>about 3–7</td><td>captions as soon as possible</td></tr>
+  <tr><td><b>Moderato</b> (default)</td><td>about 7–10</td><td>most services</td></tr>
+  <tr><td><b>Lento</b></td><td>about 10–14</td><td>the best translation: the model sees more context</td></tr>
+</table>
+<p>Pace is under <b>Settings → 1 Listen</b> (picture in Part 6). If captions break sentences in odd places, move it
+one step right; if they lag, one step left. Under the Decision Router, Soniox's own phrases set the size and Pace is
+greyed out.</p>
+<h3>Gate music</h3>
+<p>Switch on <b>Gate music</b> (Settings → 1 Listen) and Áron mutes itself while the band plays, so worship songs cost
+nothing and nothing odd reaches the screen. The <b>Mic</b> button (<span class="n">3</span>) shows it: <i>Muted</i>
+in orange while the music plays, with a dotted underline while the music detector is in charge. Click it (or press
+<kbd>2</kbd> to mute, <kbd>1</kbd> to unmute) to take over by hand.</p>
+<p class="muted">Every control and light explains itself when you hold the mouse over it. The readouts under the
+buttons (Pace, Voice, Wall) open Settings at the right place when clicked.</p>
+
+<!-- ============================================================ -->
+<h2 class="newpage"><span class="part">8</span>What it costs</h2>
+<div class="side" style="grid-template-columns: 90px 1fr">
+  <figure><div class="frame"><img src="cost.png" alt="The cost box"></div></figure>
+  <p style="margin-top:0">The <b>$</b> at the end of the lights shows what this run has cost so far, across every service.
+  Hold the mouse over it to see the split by service. It is an estimate at each provider's list price
+  (stored in <code>config/prices.json</code>); your provider's own dashboard has the exact bill.</p>
+</div>
+<table>
+  <tr><th>Set-up</th><th>Roughly, per hour of speech</th></tr>
+  <tr><td>Soniox only (speech-to-text + its own translation)</td><td>about $0.15</td></tr>
+  <tr><td>+ Soniox voice</td><td>+ $0.70</td></tr>
+  <tr><td>+ claude-haiku-4-5 translating every line</td><td>+ about $0.70</td></tr>
+  <tr><td>+ gpt-6-sol (fast) translating every line</td><td>+ about $2</td></tr>
+  <tr><td>Decision Router with gpt-6-sol redoing the doubtful lines</td><td>+ about $0.60</td></tr>
+  <tr><td>Each extra ear</td><td>+ $0.39 (ElevenLabs), $0.54 (Gemini Live), $1.02 (OpenAI live)</td></tr>
+</table>
+<p class="muted">Estimates from list prices on 10 October 2026, assuming about 130 spoken words a minute. Prompt
+caching (re-using the unchanged part of each request) keeps the AI models cheap: a gpt-6-sol line costs about
+$0.002. Gate music and the idle stop keep you from paying for silence or songs.</p>
+
+<!-- ============================================================ -->
+<h2><span class="part">9</span>Keeping the service</h2>
+<ul>
+  <li>The <b>download</b> button at the top right, beside the lights, offers two files. <b>Session record</b> (or
+      <kbd>H</kbd>) downloads the session as a web page: original beside translation, what the
+      extra ears heard, which model translated each line and why, and every setting with the time it changed.
+      The same page is saved to the <code>recordings</code> folder as the service goes.</li>
+  <li>With <b>Speak</b> on and <b>Record speech</b> on (Settings → 4 Voice), the spoken translation is recorded.
+      <b>Spoken audio</b> (or <kbd>A</kbd>) downloads it as one
+      mp3 with matching subtitles and a transcript. <b>Auto-save on exit</b> writes it to the <code>recordings</code>
+      folder when you close Áron.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2><span class="part">10</span>Troubleshooting and shortcuts</h2>
+<table>
+  <tr><th>Problem</th><th>What to do</th></tr>
+  <tr><td>“SETUP REQUIRED: missing API key”</td><td>The <code>.env</code> file is missing, misnamed (Notepad may have saved it as <code>.env.txt</code>) or not beside the program (Part 1).</td></tr>
+  <tr><td>Nothing is transcribed</td><td>Check <b>Microphone</b> (Settings → 1 Listen), that the level bar moves, and that the <b>Mic</b> button is not on <i>Muted</i>. Make sure the page address is <code>localhost</code>: browsers only allow the microphone there.</td></tr>
+  <tr><td>“Soniox key not configured”</td><td>Open <code>.env</code> and check the <code>SONIOX_API_KEY=</code> line, then restart.</td></tr>
+  <tr><td>A model is greyed out</td><td>Its provider's key is missing from <code>.env</code> (Part 5), or it cannot write one of the languages you picked.</td></tr>
+  <tr><td>Speak does nothing</td><td>Check its light at the top. With only a Soniox key it speaks straight away. If it is silent, an <b>ElevenLabs</b> choice is selected under <b>Speech</b> without its key — switch <b>Speech</b> to <b>Soniox v2</b>, or add the ElevenLabs key.</td></tr>
+  <tr><td>Captions split sentences oddly / lag</td><td>Move <b>Pace</b> right / left (Part 7).</td></tr>
+  <tr><td>The Áron page was closed mid-service</td><td>Translation stops while it is closed; the black window keeps running. Open <code>http://localhost:5000</code> again and press <b>Start</b>. Within 20 minutes the transcript comes back (click <b>Start fresh</b> to begin anew instead); your settings, the recording and, within 5 minutes, the translator's thread carry on.</td></tr>
+  <tr><td>“Address already in use”</td><td>Áron is already running in another console window. Close it, or use that one.</td></tr>
+  <tr><td>Something else</td><td>A red light says where. Click <b>Diagnostics</b> (the pulse button at the top right) for the event log, and <b>Copy</b> it to whoever helps you.</td></tr>
+</table>
+<table>
+  <tr><th>Key</th><th>Does</th><th>Key</th><th>Does</th></tr>
+  <tr><td><kbd>Space</kbd></td><td>start / stop listening</td><td><kbd>W</kbd></td><td>clear the projector</td></tr>
+  <tr><td><kbd>H</kbd></td><td>download the transcript</td><td><kbd>A</kbd></td><td>download the spoken audio</td></tr>
+  <tr><td><kbd>1</kbd> / <kbd>2</kbd></td><td>Mic on / muted</td><td><kbd>F11</kbd></td><td>projector full screen</td></tr>
+</table>
+<p class="muted">More detail: <code>QUICKSTART.md</code> (operator notes) and <code>README.md</code> (how it works)
+in the Áron folder.</p>
+
+</body>
+</html>

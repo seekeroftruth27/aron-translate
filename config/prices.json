@@ -1,0 +1,39 @@
+{
+  "_note": "USD list prices for the cost box (scripts/costs.py). Tokens are per 1M; edit when a provider changes its prices. Checked 2026-10-10 on soniox.com/pricing, claude.com/pricing, developers.openai.com/api/docs/pricing, ai.google.dev/gemini-api/docs/pricing, docs.x.ai/docs/models, elevenlabs.io/pricing/api.",
+  "as_of": "2026-10-10",
+  "llm": {
+    "claude-haiku-4-5":      {"in": 1.00, "write": 1.25,  "cached": 0.10,  "out": 5.00},
+    "claude-haiku-5-5":      {"in": 0.10, "write": 0.125, "cached": 0.01,  "out": 0.50},
+    "claude-sonnet-5-5":     {"in": 2.00, "write": 2.50,  "cached": 0.10,  "out": 10.00},
+    "gpt-6-sol-fast":        {"in": 4.00, "cached": 0.40, "out": 20.00},
+    "gpt-6-sol":             {"in": 2.00, "cached": 0.20, "out": 10.00},
+    "gpt-6.1-terra-fast":    {"in": 2.00, "cached": 0.10, "out": 10.00},
+    "gpt-6.1-terra":         {"in": 1.00, "cached": 0.05, "out": 5.00},
+    "gpt-6-luna":            {"in": 0.10, "cached": 0.01, "out": 0.50},
+    "gemini-3.6-flash":      {"in": 0.75, "cached": 0.075, "out": 3.75},
+    "gemini-3.8-flash":      {"in": 0.75, "cached": 0.075, "out": 3.75},
+    "gemini-3.5-flash-lite": {"in": 0.30, "cached": 0.03,  "out": 2.50},
+    "grok-4.20-non-reasoning": {"in": 1.25, "cached": 0.20, "out": 2.50},
+    "grok-4.20-0309-non-reasoning": {"in": 1.25, "cached": 0.20, "out": 2.50},
+    "grok-4.3":              {"in": 1.25, "cached": 0.20, "out": 2.50}
+  },
+  "soniox": {
+    "stt_per_hour": 0.12,
+    "text_out_per_m": 4.00,
+    "tts_per_hour": 0.70,
+    "tts_chars_per_hour": 54000
+  },
+  "elevenlabs_tts_per_1k_chars": {
+    "eleven_v4_turbo": 0.04,
+    "eleven_v4": 0.08,
+    "eleven_v3": 0.08,
+    "eleven_multilingual_v2": 0.08,
+    "eleven_flash_v2_5": 0.04,
+    "eleven_turbo_v2_5": 0.04
+  },
+  "ears_per_hour": {
+    "elevenlabs": 0.39,
+    "openai-live": 1.02,
+    "gemini-live": 0.54
+  }
+}

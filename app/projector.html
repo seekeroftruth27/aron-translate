@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Áron · Projector</title>
+<style>
+  /* ---- projector caption strip ---------------------------------------------
+     A calm bottom-third caption strip for the big screen, a standalone page so
+     it can be pointed at directly from a ProPresenter web object or opened on
+     any machine over the LAN. Design rules: fixed left edge (the eye always
+     knows where words appear), words fade IN in place at a steady reading pace,
+     text FLOWS as one paragraph that fills each line before starting the next,
+     at most MAX_LINES lines on screen, the line that falls off the top fades
+     away rather than scrolling, and the whole strip fades after silence. By
+     default ONE colour for every word on the wall -- a slight off-white on black
+     (black projects as "nothing", so there is no visible box) -- because the room
+     found a permanent two-tone harder to read than the motion it explained. The
+     dim tone is still there for opt-in emphasis: the Wall "highlight" knob keeps
+     only the last N sentences bright and dims older ones (default = all bright,
+     so nothing dims until the operator asks). */
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; }
+  body { background:#000; }
+  #cap { position:fixed; left:0; right:0; bottom:0; padding:0 6vw 6vh;
+         opacity:1; transition:opacity .6s ease; }   /* back in briskly… */
+  #cap.idle { opacity:0; transition:opacity 3s ease; }  /* …out slowly (silence >15s) */
+  /* Zero-height anchor. The paragraph hangs off its BOTTOM edge and grows
+     upward, so the reading line is a fixed spot on the wall: lines are added
+     and retired ABOVE it and the eye never has to follow the text down the
+     screen. */
+  #capWin { position:relative; width:100%; height:0;
+            font-size:calc(clamp(24px, 4.6vh, 56px) * var(--scale,1)); line-height:1.3;
+            color:#f2f2ee; font-weight:500; letter-spacing:.01em;
+            font-family:"Segoe UI", system-ui, -apple-system, sans-serif;
+            --live:1; --dim:.5; }   /* dim applies only when highlight < the sentences on screen */
+  /* ONE paragraph. Every word is a span with its own trailing space, so the
+     browser wraps greedily and a change at the END never re-breaks the lines
+     above it. (No text-wrap:pretty: it rebalances earlier lines, which is
+     exactly the motion this strip exists to avoid.) */
+  #capRows { position:absolute; bottom:0; left:0; right:0; text-align:left;
+             text-wrap:wrap; }
+  /* Default state is VISIBLE -- the fade is only an entrance. If the host never
+     runs transitions (some render targets, e.g. a page shown inside another
+     app's web object, don't), the word still shows at full opacity.
+     position:relative so a settled word can be nudged along its line (the
+     slide when a neighbour changes width) -- inline boxes can't be transformed,
+     but they can be offset.
+     The entrance is a TRANSITION from an inline opacity:0 that mount() sets and
+     clears (see there), not a keyframe animation: an animation overrides the
+     transition, so a word dimmed while still fading in (the last words of a
+     sentence, every time the next one starts) snapped from bright to dim in
+     one frame instead of easing. A transition re-targets smoothly. */
+  /* --fade is set from the pace (setPace): the entrance spans ~FADE_WORDS words,
+     so at a slow pace several words are mid-fade at once -- a soft gradient
+     trailing the reading point rather than one word popping in at a time. */
+  #capRows .w { position:relative; opacity:var(--live); transition:opacity var(--fade,.55s) ease; }
+  #capRows .w.dim  { opacity:var(--dim); }   /* sentences before the one being read (same tone now) */
+  #capRows .w.exit { opacity:0; transition-duration:.55s; }            /* the line falling off the top */
+</style>
+</head>
+<body>
+  <div id="cap">
+    <div id="capWin">
+      <div id="capRows"></div>
+    </div>
+  </div>
+<script>
+// ---- projector caption strip -----------------------------------------------
+// Standalone page: point a ProPresenter web object here, or open it on any
+// machine on the LAN. It is fed two ways -- a BroadcastChannel from the
+// operator's own window (same machine, instant) and a poll of the server's
+// /caption-feed store (any machine). The two are idempotent: a segment is
+// reconciled by id, so one seen on both paths is applied once.
+//
+// The wall shows ONE PARAGRAPH, not a stack of packets. Words are appended to
+// the running text and fill each line before a new one starts, so a short
+// sentence never costs a whole row. The paragraph is bottom-anchored: the
+// reading line is a fixed spot, new lines push the older ones up (one glide),
+// and the line that falls past MAX_LINES fades away in place.
+//
+// What arrives is SEGMENTS: one translated unit each -- appended once and only
+// ever corrected (an operator edit, or a delta stream growing into its final).
+// The operator casts a growing segment in whole words only, so a word that is
+// on the wall does not change under the reader unless the final rewords it.
+//
+// A correction is a WORD-LEVEL DIFF (align()): words that survive keep their
+// very spans, a word that is replaced dissolves into its
+// replacement in place, only genuinely new words fade in, and a settled word
+// whose neighbour changed width slides the few pixels to its new spot rather
+// than jumping. "in the house" becoming "at the house" moves one word.
+//
+// Motion, then, is limited to:
+//   - new words fading in (~450ms) exactly where they will stay, at a steady
+//     ~10 words a second with catch-up, so a burst can never leave the wall
+//     trailing the speaker;
+//   - a replaced word dissolving in place, and its neighbours easing along the
+//     line by the width that changed;
+//   - the one-line upward glide (~320ms, FLIP) when a line fills;
+//   - the top line fading out when it falls past MAX_LINES (it never scrolls:
+//     the paragraph is bottom-anchored, so removing it moves nothing);
+//   - after 15s of silence the whole strip fades out (3s), and the wall is
+//     wiped, so the next words start on a clean strip.
+(function(){
+  const cap  = document.getElementById('cap');
+  const win  = document.getElementById('capWin');
+  const para = document.getElementById('capRows');
+
+  // Reading pace. WPS_MIN is the design number and the pace the room actually
+  // sees: 10 words a second is about conversational speed. Catch-up is NOT
+  // proportional to the backlog -- only the words beyond WPS_LEAD are hurried
+  // along, with a time constant, so ordinary speech reads at the floor and only
+  // a genuine pile-up speeds up.
+  let WPS_MIN=10, WPS_MAX=48; const WPS_LEAD=10, WPS_DRAIN_MS=1200;
+  const SNAP_MS=500;        // frame gap this long means the tab was suspended
+  const IDLE_MS=15000;      // silence before the strip fades out
+  const FADE_MS=3000;       // …how long that fade takes (matches #cap.idle)
+  const EXIT_MS=560;        // how long a retired line takes to fade away
+  const SLIDE_MS=220;       // a settled word easing to its new spot (0 = jump)
+  const FADE_WORDS=5;       // the fade-in gradient spans about this many words (min .55s, max 2s)
+  const MORPH_MS=420;       // a replaced word dissolving into its replacement
+  let MAX_LINES=3;          // lines a single message may fill before its top scrolls off
+  let BOXED=false;          // a fixed-height box (CT_PROJECTOR_H / CT_PROJECTOR_MAX_H_PX): it may hold fewer
+                            // than MAX_LINES, so a line its top edge would cut retires too (clippedLines)
+  const TOP_SLACK=.25;      // …once more than this much of the font size is cut off its top: the
+                            // line box has room above the letters, so a sliver there is unseen
+  let LATEST_ONLY=false;    // true = show only the message being read, retiring earlier sentences
+  let DWELL_MS=1000;        // hold each line this long before it scrolls up (0 = off)
+  let HIGHLIGHT=12;         // how many recent sentences stay bright; older dim (12 = all, the default)
+  let holdUntil=0;          // the typewriter pauses until here after a line scrolls
+  // The operator's Wall knobs, live: words per second (0 = the sentence at
+  // once) and the per-line hold. They arrive on the channel and in the feed,
+  // and once one has, the .env defaults from /caps no longer apply.
+  let paced=false;
+  function setPace(p){
+    if(!p) return;
+    if(p.wps!=null){ const w=+p.wps||0; WPS_MIN = w>0 ? w : 1e6; WPS_MAX=Math.max(48, WPS_MIN*4);
+      win.style.setProperty('--fade', Math.min(2, Math.max(.55, FADE_WORDS/WPS_MIN)).toFixed(2)+'s'); }
+    if(p.dwell!=null) DWELL_MS=Math.max(0, +p.dwell||0);
+    if(p.highlight!=null){ HIGHLIGHT=Math.max(1, +p.highlight||1); relight(); }
+    // The Text knobs: a line count or size change re-wraps the wall, so lines
+    // past the new MAX_LINES retire at once rather than at the next word.
+    let relaid=false;
+    if(p.lines!=null && +p.lines>0 && +p.lines!==MAX_LINES){ MAX_LINES=+p.lines; relaid=true; }
+    if(p.font!=null && +p.font>0){
+      const s=(+p.font/100).toFixed(2);
+      if(win.style.getPropertyValue('--scale')!==s){ win.style.setProperty('--scale', s); relaid=true; }
+    }
+    if(relaid && shown) retireLines();
+    paced=true; holdUntil=0; pump();
+  }
+  const calm = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // The paragraph, oldest word first. {t: text, k: match key, seg: segment id,
+  // el: its span once revealed, si: the word's index in its segment's text
+  // (stays right when the front of the run has scrolled off), inked: what
+  // reportInk last said of it}.
+  const words=[];
+  let shown=0;              // words[0..shown) have spans; the rest wait on the typewriter
+  let reveal=0;             // fractional typewriter position, >= shown
+  const retired=new Set();  // segment ids that have left the wall: late edits are ignored
+  const key = w => { const k=w.toLowerCase().replace(/[^\p{L}\p{N}]+/gu,''); return k||w; };
+  function toWords(text, seg){
+    const out=[], re=/\S+/g; let m;
+    while((m=re.exec(text))) out.push({t:m[0], k:key(m[0]), seg, el:null, si:out.length});
+    return out;
+  }
+  function runOf(id){
+    let s=-1, e=-1;
+    for(let i=0;i<words.length;i++) if(words[i].seg===id){ if(s<0) s=i; e=i+1; }
+    return s<0 ? null : [s,e];
+  }
+
+  let idleTimer=null, wipeTimer=null;
+  function poke(){                  // any new text revives the strip
+    cap.classList.remove('idle');
+    clearTimeout(idleTimer); clearTimeout(wipeTimer);
+    idleTimer=setTimeout(()=>{
+      cap.classList.add('idle');
+      // Once it has faded, wipe: text from before a long silence has been
+      // read, and the next words should not fade back in on top of it.
+      wipeTimer=setTimeout(()=>wipe(true), FADE_MS+100);
+    }, IDLE_MS);
+  }
+  // FLIP glide: mutate, then start the paragraph where it visually was and ease
+  // it to its new resting place. The paragraph is bottom-anchored, so a height
+  // change of dh moves everything above the reading line by exactly dh.
+  function glide(mutate){
+    const h0=para.offsetHeight;
+    mutate();
+    const dh=para.offsetHeight-h0;
+    if(!dh) return;
+    para.style.transition='none';
+    para.style.transform='translateY('+dh+'px)';
+    para.getBoundingClientRect();                  // flush styles
+    para.style.transition='transform .32s ease-out';
+    para.style.transform='translateY(0)';
+  }
+  // A word is one span and must sit on ONE line. The browser may break inside
+  // it -- after an em dash or a hyphen ("probably—", "well-known") -- so that
+  // the word's head ends one line and its tail starts the next. Retirement is
+  // by line, judged from the head; when that line then leaves the DOM the
+  // orphaned tail goes with it and the whole next line jumps left by its width.
+  // A WORD JOINER (U+2060) either side of every dash forbids the break there;
+  // white-space:nowrap on the span would too, but with the trailing space
+  // inside the span it also stops the paragraph breaking BETWEEN words.
+  // Display only: the word's text and key are untouched.
+  const show = t => t.replace(/[-\u2010\u2011\u2012\u2013\u2014]/g, '\u2060$&\u2060') + ' ';
+  function mount(rec, i){           // give words[i] its span, in document order
+    const s=document.createElement('span'); s.className='w';
+    s.textContent=show(rec.t);
+    rec.el=s;
+    let next=null;
+    for(let j=i+1;j<words.length;j++) if(words[j].el){ next=words[j].el; break; }
+    para.insertBefore(s, next);                    // null appends
+    // The fade-in: start transparent, flush, then let the stylesheet's opacity
+    // transition carry it to --live (or --dim, if relight() gets there first).
+    if(!calm){ s.style.opacity='0'; s.getBoundingClientRect(); s.style.opacity=''; }
+  }
+  // The sentence being read is bright; everything before it recedes. "Being
+  // read" is the LAST run on the wall, the newest segment -- so a segment dims
+  // the moment its successor starts.
+  function relight(){
+    // The last HIGHLIGHT sentences (contiguous runs of one seg id) stay bright; everything before them dims. Walk back from the
+    // reading line counting sentence boundaries; once past HIGHLIGHT, the rest is dim.
+    let runs=0, brightFrom=0, prev, started=false;
+    for(let i=shown-1;i>=0;i--){
+      const s=words[i].seg;
+      if(!started || s!==prev){ if(++runs>HIGHLIGHT){ brightFrom=i+1; break; } prev=s; started=true; }
+    }
+    for(let i=0;i<shown;i++) words[i].el.classList.toggle('dim', i<brightFrom);
+  }
+  // Which line each revealed word sits on, by layout. offsetTop is unaffected by
+  // the glide transform, and rises monotonically through wrapped inline text.
+  function lineOf(){
+    const tops=[], out=[];
+    for(let i=0;i<shown;i++){
+      const t=Math.round(words[i].el.offsetTop);
+      if(!tops.length || t>tops[tops.length-1]+1) tops.push(t);
+      out.push(tops.length-1);
+    }
+    return {lines:tops.length, out};
+  }
+  // In a fixed-height box the wall can hold fewer lines than MAX_LINES -- a larger
+  // Text size, or a band sized for smaller text -- and the box's top edge would
+  // slice the oldest line in half. Count the leading lines whose tops it would cut,
+  // so they retire like a line past MAX_LINES. By layout: the paragraph sits on the
+  // box's bottom, so a line's top within the box is (box - paragraph height) + its
+  // offsetTop -- offsetTop, which the glide transform doesn't move. The reading
+  // line always stays, however small the box.
+  function clippedLines(lines, out){
+    const lift=win.clientHeight-para.offsetHeight,
+          slack=TOP_SLACK*(parseFloat(getComputedStyle(win).fontSize)||0);
+    let cut=0;
+    for(let i=0;i<shown;i++){
+      if(out[i]<cut) continue;                          // a later word on a line already judged
+      if(lift+words[i].el.offsetTop >= -slack) break;   // this line fits, so every one below it does
+      cut=out[i]+1;
+    }
+    return Math.min(cut, lines-1);
+  }
+  // The line(s) past MAX_LINES fall off the TOP. The paragraph is bottom-
+  // anchored, so taking them out moves nothing below: the spans just fade, then
+  // leave the DOM. Words on a line are always the earliest in the paragraph,
+  // and the earliest are always revealed, so this only ever touches words[0..).
+  function retireLines(){
+    const {lines, out}=lineOf();
+    let extra=lines-MAX_LINES;
+    if(BOXED) extra=Math.max(extra, clippedLines(lines, out));
+    if(extra<=0) return 0;
+    let n=0; while(n<shown && out[n]<extra) n++;
+    const gone=words.splice(0,n);
+    shown-=n; reveal=Math.max(shown, reveal-n);
+    const els=[];
+    for(const w of gone){
+      const el=w.el; w.el=null;
+      el.classList.add('exit'); els.push(el);
+    }
+    unmountLater(els);
+    for(const w of gone)
+      if(!words.some(x=>x.seg===w.seg)) retired.add(w.seg);
+    return n;
+  }
+  // A retired line's spans stay in flow (transparent) while they fade, then
+  // leave the DOM together, in ONE task. One timer per span put each removal
+  // in its own task, and the browser may paint between tasks: a frame with the
+  // line half gone, the words below it pulled up and shoved sideways by the
+  // width of what remained, then back the next frame -- a one-frame lurch of
+  // every line on the wall, at every retirement.
+  function unmountLater(els){
+    if(!els.length) return;
+    setTimeout(()=>{ for(const el of els) if(el.parentNode) el.remove(); }, EXIT_MS+120);
+  }
+  // LATEST_ONLY: retire every sentence before the one being read, so the wall
+  // shows just the current message (the last segment) instead of a rolling
+  // history. Called when a
+  // new segment commits; harmless when the last segment is unchanged.
+  function retireToLatest(){
+    let lastSeg=null;
+    if(words.length) lastSeg=words[words.length-1].seg;
+    if(lastSeg===null) return;                 // nothing on the wall yet
+    let start=-1;
+    for(let i=0;i<words.length;i++) if(words[i].seg===lastSeg){ start=i; break; }
+    if(start<=0) return;
+    const gone=words.splice(0,start);
+    shown=Math.max(0, shown-start); reveal=Math.max(shown, reveal-start);
+    const ids=new Set(), els=[];
+    for(const w of gone){
+      ids.add(w.seg);
+      if(w.el){ const el=w.el; w.el=null; el.classList.add('exit'); els.push(el); }
+    }
+    unmountLater(els);
+    for(const id of ids) if(!words.some(x=>x.seg===id)) retired.add(id);
+  }
+
+  // ---- word-level diff -----------------------------------------------------
+  // new index -> old index, or -1. Prefix and suffix are free; LCS over the
+  // middle, walked forward and preferring to skip OLD words on a tie, so a word
+  // matches the earliest place it can (its own sentence, not a chance repeat of
+  // the word further on).
+  function align(oldK, newK){
+    const map=new Array(newK.length).fill(-1);
+    let p=0; while(p<oldK.length && p<newK.length && oldK[p]===newK[p]){ map[p]=p; p++; }
+    let s=0;
+    while(s<oldK.length-p && s<newK.length-p &&
+          oldK[oldK.length-1-s]===newK[newK.length-1-s]){ map[newK.length-1-s]=oldK.length-1-s; s++; }
+    const oi=oldK.slice(p,oldK.length-s), ni=newK.slice(p,newK.length-s);
+    const m=oi.length, n=ni.length;
+    if(!m || !n || m*n>40000) return map;   // nothing in the middle, or too big to be worth it
+    const L=new Uint16Array((m+1)*(n+1));
+    for(let i=m-1;i>=0;i--) for(let j=n-1;j>=0;j--)
+      L[i*(n+1)+j] = oi[i]===ni[j] ? L[(i+1)*(n+1)+j+1]+1
+                   : Math.max(L[(i+1)*(n+1)+j], L[i*(n+1)+j+1]);
+    let i=0,j=0;
+    while(i<m && j<n){
+      if(oi[i]===ni[j]){ map[p+j]=p+i; i++; j++; }
+      else if(L[(i+1)*(n+1)+j] >= L[i*(n+1)+j+1]) i++;
+      else j++;
+    }
+    return map;
+  }
+  // Where every revealed word is, for the slide: its LAYOUT spot (x) and where
+  // it is actually being drawn (vx), which differ while an earlier slide is
+  // still easing it home. offsetLeft includes that relative offset, so the
+  // animated `left` is subtracted back out. A slide that is cut short by the
+  // next change then continues from where it visibly is, not from a jump.
+  function slideOff(el){ return parseFloat(getComputedStyle(el).left)||0; }
+  function positions(){
+    const m=new Map();
+    for(const w of words){
+      const el=w.el; if(!el) continue;
+      const off=slideOff(el);
+      m.set(el, {x:el.offsetLeft-off, vx:el.offsetLeft, y:el.offsetTop});
+    }
+    return m;
+  }
+  // Replace words[start..end) with `inc`, touching only what differs.
+  //   - a word present in both keeps its span (text refreshed silently if only
+  //     case or punctuation changed);
+  //   - between two survivors, old words are paired with new ones in order: each
+  //     pair is a REPLACEMENT that reuses the span and dissolves into the new
+  //     text; leftover old words are removed, leftover new words are inserted;
+  //   - inserted words that land among revealed ones are revealed at once (a
+  //     correction is not typed out again); those past the end wait their turn
+  //     on the typewriter like any new text.
+  function reconcile(start, end, inc, seg){
+    const old=words.slice(start,end);
+    const map=align(old.map(w=>w.k), inc.map(w=>w.k));
+    const out=[], drops=[], morphs=[], retext=[];
+    let oi=0, pend=[];
+    const settle=(m)=>{                           // old[oi..m) vs the new words pending
+      let p=0;
+      for(;oi<m;oi++){
+        const o=old[oi];
+        if(p<pend.length){ const nw=pend[p++]; o.t=nw.t; o.k=nw.k; o.seg=seg; o.si=nw.si;
+                           if(o.el) morphs.push(o); out.push(o); }
+        else drops.push(o);
+      }
+      for(;p<pend.length;p++) out.push(pend[p]);
+      pend=[];
+    };
+    for(let j=0;j<inc.length;j++){
+      const m=map[j];
+      if(m<0){ pend.push(inc[j]); continue; }
+      settle(m);
+      const o=old[m]; o.seg=seg; o.si=inc[j].si;
+      if(o.t!==inc[j].t){ o.t=inc[j].t; if(o.el) retext.push(o); }
+      out.push(o); oi=m+1;
+    }
+    settle(old.length);
+    const before=positions(), frac=Math.max(0, Math.min(1, reveal-shown));
+    words.splice(start, end-start, ...out);
+    glide(()=>{
+      for(const d of drops) if(d.el){ d.el.remove(); d.el=null; }
+      for(const o of retext) o.el.textContent=show(o.t);
+      for(const o of morphs) o.el.textContent=show(o.t);
+      let last=-1; for(let i=words.length-1;i>=0;i--) if(words[i].el){ last=i; break; }
+      for(let i=0;i<=last;i++) if(!words[i].el) mount(words[i], i);
+      shown=last+1; reveal=Math.min(words.length, shown+frac);   // keep the typewriter's stride
+    });
+    relight();
+    if(!calm){
+      // Survivors ease along their line by however much their neighbours'
+      // widths changed. A word that changed LINE is not flown across the wall
+      // -- it just appears where it now belongs.
+      if(SLIDE_MS) for(const [el,p] of before){
+        if(!el.isConnected) continue;
+        const x=el.offsetLeft-slideOff(el), dy=p.y-el.offsetTop;
+        if(x!==p.x && !dy)                     // moved along its line: ease from where it is drawn
+          el.animate([{left:(p.vx-x)+'px'},{left:'0px'}], {duration:SLIDE_MS, easing:'ease-out'});
+      }
+      for(const o of morphs)
+        o.el.animate([{opacity:.15},{opacity:getComputedStyle(o.el).opacity}],
+                     {duration:MORPH_MS, easing:'ease-out'});
+    }
+    retireLines(); reportInk(); poke(); pump();
+  }
+
+  // ---- typewriter ----------------------------------------------------------
+  // Every step is scheduled TWICE: a requestAnimationFrame, and a plain timer
+  // TICK_MS later. Whichever fires first runs the step and cancels the other.
+  // In a normal browser rAF always wins and the timer is never seen. In a
+  // render target that pauses rAF for a page it treats as hidden -- inside
+  // ProPresenter's web object, an OBS browser source, any embedded view where
+  // document.hidden is true -- the timer carries the typewriter at the same
+  // words-per-second, so the wall reads identically either way.
+  //
+  // This replaced a watchdog that polled "words waiting and nothing painted for
+  // 350ms -> reveal everything". It starved: a draft update ALSO counted as a
+  // paint, and Soniox sends one every few hundred ms while someone is
+  // speaking, so with rAF paused the wall stayed blank for the whole utterance
+  // and then dumped it at the first pause -- a dozen lines landing at once, the
+  // older ones fading out over the next half second. A fallback that is the
+  // typewriter itself cannot be starved by traffic -- and it needs no special
+  // case for the per-line dwell either: a hold is just a step that reschedules
+  // itself for later, on either clock.
+  const TICK_MS=100;        // the fallback's cadence: one word per tick at WPS_MIN
+  let tick=null, tickTimer=null, lastTs=0;
+  function pump(){
+    if(tick!=null || tickTimer!=null || reveal>=words.length) return;
+    tick=requestAnimationFrame(ts=>{ tick=null; unpump(); step(ts); });
+    tickTimer=setTimeout(()=>{ tickTimer=null; unpump(); step(performance.now()); }, TICK_MS);
+  }
+  function unpump(){
+    if(tick!=null){ cancelAnimationFrame(tick); tick=null; }
+    if(tickTimer!=null){ clearTimeout(tickTimer); tickTimer=null; }
+  }
+  function paint(){                  // reveal words[shown..floor(reveal))
+    const n=Math.min(words.length, Math.floor(reveal));
+    if(n<=shown) return;
+    const linesBefore=lineOf().lines;
+    glide(()=>{ for(let i=shown;i<n;i++) mount(words[i], i); shown=n; });
+    reportInk();
+    relight();
+    const removed=retireLines();
+    // A line scrolled up (the paragraph grew a line, or one fell off the top):
+    // hold the typewriter a beat so a large paragraph does not fly past too fast.
+    if(DWELL_MS>0 && (removed>0 || lineOf().lines>linesBefore))
+      holdUntil=performance.now()+DWELL_MS;
+  }
+  function snap(){ reveal=words.length; paint(); }
+  function step(ts){
+    if(reveal>=words.length){ lastTs=0; return; }
+    const now=performance.now();
+    if(now<holdUntil){ lastTs=0; setTimeout(pump, Math.max(16, holdUntil-now)); return; }
+    const gap=lastTs?ts-lastTs:16; lastTs=ts;
+    if(DWELL_MS>0){
+      // Pacing on: reveal at a steady floor (no burst catch-up, no snap-to-end),
+      // so a line fills at reading speed and the per-line dwell governs the scroll.
+      reveal=Math.min(words.length, reveal+WPS_MIN*gap/1000);
+    } else if(gap>=SNAP_MS){ reveal=words.length;   // hidden tab: don't type out the backlog
+    } else {
+      const backlog=words.length-reveal;
+      const wps=Math.min(WPS_MAX,
+        WPS_MIN + Math.max(0, backlog-WPS_LEAD)/(WPS_DRAIN_MS/1000));
+      reveal=Math.min(words.length, reveal+wps*gap/1000);
+    }
+    paint();
+    if(reveal<words.length) pump(); else lastTs=0;
+  }
+
+  // ---- feed ----------------------------------------------------------------
+  function onSeg(id, text, done){
+    if(!id || !text || retired.has(id)) return;
+    const inc=toWords(text, id);
+    const run=runOf(id);
+    if(run) reconcile(run[0], run[1], inc, id);
+    else reconcile(words.length, words.length, inc, id);
+    if(LATEST_ONLY) retireToLatest();
+  }
+  function wipe(idle){
+    unpump();
+    lastTs=0;
+    for(const w of words) retired.add(w.seg);
+    words.length=0; shown=0; reveal=0;
+    para.textContent=''; para.style.transition='none'; para.style.transform='';
+    if(!idle) retired.clear();
+  }
+  function onClear(){ clearTimeout(idleTimer); clearTimeout(wipeTimer); wipe(false); }
+
+  // Same machine, instant: BroadcastChannel from the operator's own window.
+  const chan = window.BroadcastChannel ? new BroadcastChannel('aron-captions') : null;
+  // Ink receipts: the operator's mic -> wall latency ends HERE, at the moment a
+  // word is actually drawn, so this window says when that was. One message per
+  // paint listing the words that became visible since the last, as [id, index
+  // in the segment's text]. Timestamps are epoch-based (timeOrigin + now): this window's
+  // performance clock does not share an origin with the operator's.
+  // Same-machine windows only -- the networked (feed) projector has no channel
+  // back, and the operator measures only the local wall.
+  function reportInk(){
+    if(!chan) return;
+    const segs=[];
+    for(let i=0;i<shown;i++){
+      const w=words[i]; if(!w.el) continue;
+      const tag=w.seg+'#'+w.si;
+      if(w.inked!==tag){ w.inked=tag; segs.push([w.seg, w.si]); }
+    }
+    if(segs.length)
+      chan.postMessage({type:'ink', at:performance.timeOrigin+performance.now(), segs});
+  }
+  if(chan) chan.onmessage = e=>{
+    const m = e.data || {};
+    if(m.type==='seg') onSeg(m.id, m.text, !!m.done);
+    else if(m.type==='pace') setPace(m);
+    else if(m.type==='clear') onClear();
+  };
+  // Any machine: poll the server's projector store, so this page shows the
+  // captions even when opened on ANOTHER computer (the ProPresenter PC) over the
+  // LAN, where BroadcastChannel never reaches.
+  (function(){
+    let feedRev=-1, feedEpoch=null, first=true;
+    const applied={};                                  // seg id -> "text|done" already shown
+    // Names this page to the server, which counts the projectors polling for
+    // the operator's Projector light (server.py /pipe-status).
+    const pid=Math.random().toString(36).slice(2,10);
+    async function poll(){
+      try{
+        const r=await fetch('/caption-feed?since='+feedRev+'&pid='+pid,{cache:'no-store'});
+        const d=await r.json();
+        if(d.epoch!==feedEpoch){                        // new session (Clear) or first load
+          if(feedRev!==-1){ onClear(); for(const k in applied) delete applied[k]; }
+          feedEpoch=d.epoch; first=true;
+        }
+        if(d.changed){
+          feedRev=d.rev;
+          if(d.pace) setPace(d.pace);
+          let segs=d.segs||[];
+          if(first){
+            // Joining mid-service: the last MAX_LINES segments as context, and
+            // everything before them RETIRED, not merely left out of this
+            // pass. Leaving it out was a bug: the store returns every segment
+            // it holds (40) on every change, so segments skipped here were
+            // unknown to the page on the next change and poured onto the wall
+            // in order, after the live text, at catch-up speed -- five minutes
+            // of sermon scrolling past because the projector was switched on
+            // late. Retired ids are ignored for good, an operator's later edit
+            // to one of those rows included.
+            for(const s of segs.slice(0,-MAX_LINES)) retired.add(s.id);
+            segs=segs.slice(-MAX_LINES);
+          }
+          for(const s of segs){
+            const v=(s.text||'')+'|'+(s.done?1:0);
+            if(applied[s.id]===v) continue;
+            applied[s.id]=v;
+            onSeg(s.id, s.text, !!s.done);
+          }
+          if(first){ first=false; snap(); }            // …and don't type the backlog out
+        }
+      }catch(e){}
+      setTimeout(poll, 250);                            // ~4x/second
+    }
+    poll();
+  })();
+  // Fixed size / placement for a ProPresenter media/browser box (CT_PROJECTOR_*
+  // via /caps).
+  fetch('/caps').then(r=>r.json()).then(c=>{
+    const w=+c.projector_w||0, h=+c.projector_h||0, bg=(c.projector_bg||'').trim(),
+          font=+c.projector_font||0, bottom=+c.projector_bottom||0, maxh=+c.projector_max_h||0,
+          left=+c.projector_left||0, right=+c.projector_right||0;
+    // Reveal scope + pacing.
+    if(!paced && +c.projector_lines>0) MAX_LINES=+c.projector_lines;
+    // as the operator page sizes it: 2 lines a little larger to fill the space
+    if(!paced && MAX_LINES<=2) win.style.setProperty('--scale', 1.15);
+    LATEST_ONLY = c.projector_latest_only==null ? false : !!+c.projector_latest_only;
+    if(!paced) DWELL_MS = c.projector_dwell==null ? DWELL_MS : (+c.projector_dwell||0);
+    if(!paced && c.projector_highlight!=null){ HIGHLIGHT=Math.max(1, +c.projector_highlight||1); relight(); }
+    if(bg) document.body.style.background=bg;
+    // Fixed caption text size (px) overrides the window-scaled default -- essential
+    // in a short lower-third media box where the default comes out tiny.
+    if(font>0) win.style.fontSize='calc('+font+'px * var(--scale,1))';   // the Text size knob still scales it
+    // Left/right margins (px) override the default 6vw gutter, to line the caption up
+    // with a lower-third graphic or tighten it into a fixed box.
+    if(left>0) cap.style.paddingLeft=left+'px';
+    if(right>0) cap.style.paddingRight=right+'px';
+    // Place the strip within a full-height page: lift it up from the bottom edge, and
+    // cap its height (clip the oldest lines) so it stays inside a lower-third band.
+    if(bottom>0) cap.style.paddingBottom=bottom+'px';
+    if(maxh>0){
+      // A REAL height, not max-height. #cap is bottom-anchored and its only content
+      // (#capWin) is a zero-height anchor, so max-height leaves #cap ~0px tall and
+      // overflow:hidden then clips the upward-growing paragraph away entirely --
+      // the band renders but no text shows. Giving #cap a real height makes it a
+      // band pinned at the bottom; filling the anchor (#capWin) to that height
+      // keeps the reading line at the band's bottom, so only the OLDEST lines
+      // clip off the top.
+      cap.style.height=maxh+'px'; cap.style.overflow='hidden';
+      win.style.height='100%';
+      BOXED=true;
+    }
+    if(w>0 || h>0){
+      cap.style.left='0'; cap.style.right='auto'; cap.style.top='0'; cap.style.bottom='auto';
+      if(w>0) cap.style.width=w+'px';
+      if(h>0) cap.style.height=h+'px';
+      cap.style.overflow='hidden';
+      win.style.height='100%';   // lines anchor to the box's bottom, not its top
+      if(h>0) BOXED=true;        // a width alone leaves the height free
+    }
+    if(BOXED && shown) retireLines();   // text already up when the box size landed
+  }).catch(()=>{});
+  poke();  // start visible, fade if nothing arrives
+})();
+</script>
+</body>
+</html>

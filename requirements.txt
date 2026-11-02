@@ -1,0 +1,11 @@
+# Dependencies for the cloud pipeline (Soniox STT, Claude translation,
+# ElevenLabs TTS). Needs Python 3.9+ (on Windows install from python.org).
+# Nothing runs locally, so this is the whole footprint.
+Flask>=3.0,<4
+requests>=2.31
+numpy>=1.26
+soundfile>=0.12.1
+anthropic>=0.115,<1         # Sonnet 5 + output_config.effort / adaptive thinking
+httpx>=0.27
+websockets>=12          # Soniox realtime STT client (websockets.sync.client)
+flask-sock>=0.7         # browser->server streaming socket for /stt-stream
