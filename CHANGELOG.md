@@ -1,5 +1,18 @@
 # Changelog
 
+## [v2.18.2] — 2026-11-02
+
+### Added
+- **The Message follows the Mic.** With `CT_PROPRESENTER_FOLLOW_MIC=1` the
+  ProPresenter Message is the translation box itself (a web object in its theme
+  carries the captions): Áron sends it no text, shows it when the translation turns
+  on (Mic on while listening) and clears it when it turns off (Muted, by the
+  operator or Gate music, or Stop). Once per change, never per caption.
+
+### Removed
+- **The Message on/off signal (`CT_PROPRESENTER_SIGNAL`)** and its fixed "."
+  trigger: replaced by following the Mic above, which needs no placeholder text.
+
 ## [v2.18.1] — 2026-11-01
 
 ### Added
