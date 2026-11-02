@@ -1,5 +1,64 @@
 # Changelog
 
+## [v2.18.0] — 2026-11-01
+
+### Added
+- **Áron for Linux.** Each release now carries
+  `church-translate-linux-x86_64.tar.gz` for ordinary PCs and
+  `church-translate-linux-arm64.tar.gz` for the Raspberry Pi 4/5 and other
+  64-bit ARM machines, beside the Windows exe. Unpack and run
+  `./church-translate`; the first run asks for the Soniox key in the terminal
+  and saves it in a `.env` beside the program. Needs glibc 2.35 or newer
+  (Ubuntu 22.04+, Debian 12+, 64-bit Raspberry Pi OS Bookworm+, Fedora 36+).
+  The release also carries `SHA256SUMS` to check any download against.
+- **Áron is open source.** The full source is on the
+  [`source`](https://github.com/seekeroftruth27/aron-translate/tree/source)
+  branch of the public repo, now named `aron-translate`, one commit per
+  version: run it from source on Linux, macOS or Windows with Python 3.9+, and
+  send issues and pull requests.
+- **The service survives the operator page closing.** Closing the page, a
+  crash or a switch to another browser no longer costs the service its
+  settings, its last state or its transcript:
+  - **Settings follow the server.** They are saved on the server too
+    (`operator-settings.json` beside the recordings), so a different browser, a
+    private window or a cleared cache opens on your settings instead of the
+    defaults, and the projector no longer receives the defaults the moment such
+    a page opens. They survive a server restart; the newest change wins.
+  - **The last state is saved on the way out.** A closing page sends the
+    session record's latest rows, a caption still being translated included.
+    If the browser crashes, is force-quit or the computer sleeps, the server
+    notices the audio stream drop without a Stop and, when no page is back
+    within 30 s, saves the recording and the session record itself.
+  - **A reopened page resumes the service.** Within 20 minutes of the page
+    leaving, the Original and Translation columns are refilled and the session
+    record carries on as the same service, under a note "Resumed the service
+    from …" with **Start fresh**. A second tab opened beside a page that is
+    still running starts on its own.
+- **First run of the exe makes its `.env`.** With no Soniox key and no `.env`
+  beside it, the exe writes a starter `.env` (placeholders blanked) and opens it
+  in Notepad, then carries on when Notepad closes; a `.env` still without the
+  key opens again on the next start.
+
+### Fixed
+- **Running from source with `.env.example` copied as it is no longer stops at
+  start.** Its blank `CT_HEARS_FIRST_S=` line raised an error before the server
+  came up; a blank value now means the default.
+- **The projector no longer slices its top line in a fixed-size box**
+  (`CT_PROJECTOR_H` / `CT_PROJECTOR_MAX_H_PX`, e.g. a ProPresenter or livestream
+  lower third). Pressing "2 lines" raises the text to 115%, and in a box sized
+  for the standard text the box's top edge cut the oldest line through its
+  letters; a line that no longer fits now leaves like any other old line. At
+  3 lines nothing changes.
+- **`CT_PROJECTOR_LINES` of 1, 4 or 5 is no longer overridden.** The Lines
+  control rounded it to 2 or 3 and sent that to every projector; it now gets a
+  stop of its own beside 2 and 3.
+
+### Changed
+- The quick start guide and QUICKSTART.md say what happens when the page
+  closes mid-service and what comes back on reopening, and the troubleshooting
+  covers a greyed-out Model menu caused by a `.env` left in an old folder or an
+  empty Windows environment variable of the same name.
+
 ## [v2.17.0] — 2026-10-31
 
 ### Changed
