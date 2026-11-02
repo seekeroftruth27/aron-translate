@@ -229,7 +229,7 @@ See `CHANGELOG.md` for release notes.
 
 ## Support
 
-- **Repo:** https://github.com/seekeroftruth27/aron-public
+- **Repo:** https://github.com/seekeroftruth27/aron-translate
 - **Issues:** Report via GitHub Issues
 
 ---

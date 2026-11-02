@@ -3,6 +3,19 @@
 ## [v2.18.0] — 2026-11-01
 
 ### Added
+- **Áron for Linux.** Each release now carries
+  `church-translate-linux-x86_64.tar.gz` for ordinary PCs and
+  `church-translate-linux-arm64.tar.gz` for the Raspberry Pi 4/5 and other
+  64-bit ARM machines, beside the Windows exe. Unpack and run
+  `./church-translate`; the first run asks for the Soniox key in the terminal
+  and saves it in a `.env` beside the program. Needs glibc 2.35 or newer
+  (Ubuntu 22.04+, Debian 12+, 64-bit Raspberry Pi OS Bookworm+, Fedora 36+).
+  The release also carries `SHA256SUMS` to check any download against.
+- **Áron is open source.** The full source is on the
+  [`source`](https://github.com/seekeroftruth27/aron-translate/tree/source)
+  branch of the public repo, now named `aron-translate`, one commit per
+  version: run it from source on Linux, macOS or Windows with Python 3.9+, and
+  send issues and pull requests.
 - **The service survives the operator page closing.** Closing the page, a
   crash or a switch to another browser no longer costs the service its
   settings, its last state or its transcript:
@@ -27,6 +40,9 @@
   key opens again on the next start.
 
 ### Fixed
+- **Running from source with `.env.example` copied as it is no longer stops at
+  start.** Its blank `CT_HEARS_FIRST_S=` line raised an error before the server
+  came up; a blank value now means the default.
 - **The projector no longer slices its top line in a fixed-size box**
   (`CT_PROJECTOR_H` / `CT_PROJECTOR_MAX_H_PX`, e.g. a ProPresenter or livestream
   lower third). Pressing "2 lines" raises the text to 115%, and in a box sized

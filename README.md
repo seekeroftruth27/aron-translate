@@ -217,6 +217,22 @@ OpenAI key for the Decision Router. Start here if you are new: [`QUICKSTART.pdf`
 run builds a tiny native-Windows Python env, asks for your API keys (saved to
 `.env`), and opens the browser. Later launches start instantly.
 
+**Linux (download).** Get `church-translate-linux-x86_64.tar.gz` (most PCs) or
+`church-translate-linux-arm64.tar.gz` (Raspberry Pi 4/5 and other 64-bit ARM)
+from the [latest release](https://github.com/seekeroftruth27/aron-translate/releases/latest),
+then:
+
+```bash
+tar -xzf church-translate-linux-x86_64.tar.gz
+./church-translate
+```
+
+The first run asks for your Soniox key in the terminal and saves it in a `.env`
+beside the program; it then opens the browser. It needs glibc 2.35 or newer
+(Ubuntu 22.04+, Debian 12+, Raspberry Pi OS Bookworm+, Fedora 36+). To check a
+download, `sha256sum -c SHA256SUMS --ignore-missing` against the release's
+`SHA256SUMS`.
+
 **Linux / macOS (from source).** You need Python 3.9+ with `venv` (on
 Debian/Ubuntu/Raspberry Pi OS: `sudo apt install python3-venv`). Copy
 `.env.example` to `.env` and fill in your keys (leave a line blank for its

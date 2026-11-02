@@ -130,6 +130,14 @@ STARTER_HEAD = """\
 # Everything else in this file is optional; the comments say what each line does.
 """
 
+# Linux/macOS: the key is asked for in the terminal and written in here.
+STARTER_HEAD_TERMINAL = """\
+# Áron settings. Your Soniox key goes straight after the = on the
+# SONIOX_API_KEY= line below (no spaces, no quotes); on the first run Áron asks
+# for it in the terminal and writes it in. Get a key at https://console.soniox.com.
+# Everything else in this file is optional; the comments say what each line does.
+"""
+
 
 def write_starter_env(app_dir, exe_dir):
     """First run with no keys and no .env: write a starter .env next to the
@@ -151,7 +159,8 @@ def write_starter_env(app_dir, exe_dir):
         while lines and lines[0].startswith('#'):
             lines.pop(0)
         body = [re.sub(r'^([A-Z0-9_]+)=.*\byour\b.*$', r'\1=', l) for l in lines]
-        target.write_text(STARTER_HEAD + '\n'.join(body) + '\n', encoding='utf-8')
+        head = STARTER_HEAD if sys.platform == 'win32' else STARTER_HEAD_TERMINAL
+        target.write_text(head + '\n'.join(body) + '\n', encoding='utf-8')
     except OSError as exc:
         print(f"Could not write {target}: {exc}")
         return None
@@ -169,6 +178,36 @@ def edit_in_notepad(path):
         return True
     except OSError as exc:
         print(f"Could not open Notepad ({exc}); edit {path} by hand.")
+        return False
+
+
+def ask_key_in_terminal(path):
+    """Linux/macOS: ask for the Soniox key in the terminal and write it into
+    `path`. With no terminal (started from a file manager) just say where the
+    file is."""
+    if not sys.stdin or not sys.stdin.isatty():
+        print(f"Open {path}, add your key, and start the program again.")
+        return False
+    try:
+        key = input("Paste your Soniox key and press Enter: ").strip().strip('"\'')
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    if not key:
+        print(f"No key given. Add it to {path} and start the program again.")
+        return False
+    try:
+        text = path.read_text(encoding='utf-8-sig')
+        line = f"SONIOX_API_KEY={key}"
+        if re.search(r'^SONIOX_API_KEY=.*$', text, flags=re.M):
+            text = re.sub(r'^SONIOX_API_KEY=.*$', lambda m: line, text, count=1, flags=re.M)
+        else:
+            text += ('' if text.endswith('\n') else '\n') + line + '\n'
+        path.write_text(text, encoding='utf-8')
+        print(f"Saved to {path}.")
+        return True
+    except OSError as exc:
+        print(f"Could not write {path}: {exc}")
         return False
 
 
@@ -223,7 +262,8 @@ def main():
     # The exe with no Soniox key: on a first run (no .env beside it) make the
     # .env for the operator, rather than asking them to copy a file they never
     # downloaded; with a .env that still lacks the key, open that one again.
-    # Once Notepad closes, read it and carry on.
+    # Once Notepad closes (Linux/macOS: once the key is typed in the terminal),
+    # read it and carry on.
     exe_dir = Path(sys.executable).resolve().parent
     if not have_all_required and getattr(sys, 'frozen', False):
         made = not have_env_file
@@ -233,10 +273,13 @@ def main():
             print("Áron needs your Soniox key.")
             print("=" * 60)
             print(("A settings file was made for you: " if made else "Your settings file: ") + str(starter))
-            print("It is open in Notepad. Paste your key after SONIOX_API_KEY=,")
-            print("save (Ctrl+S) and close Notepad. Áron starts when you do.")
+            if sys.platform == 'win32':
+                print("It is open in Notepad. Paste your key after SONIOX_API_KEY=,")
+                print("save (Ctrl+S) and close Notepad. Áron starts when you do.")
             print()
-            if edit_in_notepad(starter):
+            got_key = (edit_in_notepad(starter) if sys.platform == 'win32'
+                       else ask_key_in_terminal(starter))
+            if got_key:
                 # Forget the blanks the first read set, or the re-read (which
                 # never overrides) would keep them over the key just pasted.
                 for k in from_dotenv:
