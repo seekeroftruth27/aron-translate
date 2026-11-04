@@ -1,5 +1,41 @@
 # Changelog
 
+## [v2.19.0] — 2026-11-03
+
+### Added
+- **Recognizer menu (Settings › Listen): Soniox `stt-rt-v5` or `stt-rt-v6`.** v6 (released
+  2026-11) mis-hears less (pooled word error 7.2% → 6.2% over 13 FLEURS languages, lower in
+  11 of 15) and writes far fewer stray full stops (11–17% of its stops against v5's 43–49% in
+  the sermons that had them), but every word reaches the screen about 0.35 s later, in every
+  language tested. v5 stays the default; a running service restarts its stream on a change.
+  The pick is saved and named in the session record. Measurements:
+  `validation/results/2026-11-03-soniox-v6/`.
+
+### Changed
+- **A quotation ends where the preacher stops quoting.** When he quotes a few words of a
+  verse and goes straight on with his own point ("when David says, "I confessed my sins…",
+  he finds peace and freedom"), the translator now closes the quotation there instead of
+  letting the transcriber's mark run on over his words. On lines quoted the way Soniox
+  quotes them, gpt-6-sol and gpt-6.1-terra overran about half as often (16 to 9 in 152);
+  claude-haiku-4-5 is unchanged. `validation/results/2026-11-03-quote-allusions/`.
+
+### Fixed
+- **The Decision Router's note can no longer reach the wall in any language.** On
+  2026-11-01 an English sermon captioned into Romanian showed the Router's note to the
+  translator, translated into Romanian, after a correct caption (1 line of 3,867). The
+  earlier guard knew only the note's English words. Two changes, neither reading any
+  language: on the OpenAI and xAI translators the note now travels as its own system
+  message (gpt-6.1-terra copied it 20 times in 48 before, 0 in 48 after, and it helps as
+  much); and on every translator a reply to a sent-on line that runs past twice the
+  length of the line (or of Soniox's translation of it) is cut at the sentence that ends
+  the caption, and one that still runs past the caption's sentences is dropped (the wall
+  keeps Soniox's line).
+- **A preacher talking about translation is no longer blanked.** "I cannot translate this
+  word into Romanian…", "The source language of this text is Hebrew…", "Note: in some
+  manuscripts…", "No translation is possible for this word" and "Please provide the full
+  context before you judge…" were taken for a translator breaking role and dropped.
+  Measurements: `validation/results/2026-11-03-clue-leak-any-language/`.
+
 ## [v2.18.3] — 2026-11-02
 
 ### Changed
