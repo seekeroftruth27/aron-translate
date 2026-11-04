@@ -511,6 +511,8 @@
     <h3><span class="num">1</span>Listen</h3>
     <label class="f" title="The microphone or mixer feed Áron listens to."><span>Microphone</span>
       <select id="device"><option value="">Default device</option></select></label>
+    <label class="f hide" id="sxModelWrap" title="Soniox's speech recognition model. Takes effect at once: a running service restarts its stream."><div>Recognizer<p class="help" id="sxModelHelp"></p></div>
+      <select id="sxModel"></select></label>
     <div class="f" title="Boost a quiet feed before recognition."><span>Gain <b class="v" id="gainV">0 dB</b></span>
       <input type="range" id="gain" min="-6" max="30" step="1" value="0" aria-label="Gain"></div>
     <div class="f col" title="Packet size: smaller reaches the wall sooner, bigger gives the translator more context."><span>Pace</span>
@@ -658,6 +660,13 @@ const webWrap=$('webWrap'), webStream=$('webStream');
 const ppWrap=$('ppWrap'), ppStream=$('ppStream');
 const elVoice=$('elVoice');
 const ttsProv=$('ttsProv'), sxVoice=$('sxVoice');
+// The Recognizer menu: Soniox realtime models the server offers (caps.soniox_models).
+// Measured 2026-11-03: validation/results/2026-11-03-soniox-v6/.
+const SX_MODEL_HELP={'stt-rt-v5':'Words on screen soonest.',
+                     'stt-rt-v6':'Fewer mis-heard words and stray full stops; words reach the screen about 0.35 s later.'};
+const sxModelSel=$('sxModel');
+function sxModel(){ return sxModelSel.value||caps.soniox_model||''; }
+function syncSxModelHelp(){ $('sxModelHelp').textContent=SX_MODEL_HELP[sxModelSel.value]||''; }
 // One Speech menu names the service and its model together: 'soniox' (Soniox
 // v2), 'eleven_v4' or 'eleven_v4_turbo'. The older ElevenLabs models left it
 // 2026-10-28; the prices are on the website now, not in the menu.
@@ -1532,7 +1541,7 @@ function jConfig(){
     'Gain':gainEl.value+' dB',
     'Pace':pace().name,
     'Cut rule':cutAlgo(),
-    'Speech-to-text':caps.stt_stream?'Soniox '+(caps.soniox_model||'')+' (stream)':'Silero + Soniox per segment',
+    'Speech-to-text':caps.stt_stream?'Soniox '+sxModel()+' (stream)':'Silero + Soniox per segment',
     'Soniox translation':sonioxTranslateWanted(),
     'Decision Router':routerOn()?'on · '+(caps.router_model||'gpt-6-luna')+' · threshold '+Math.round(100*(caps.router_th||0.3))+'%':'off',
     'Extra ears':earsEnabled()?(selectedEars().map(n=>earLabels[n]||n).join(', ')||'none'):'off (CT_EARS=0)',
@@ -2537,6 +2546,14 @@ async function loadCaps(){
   routerBox.checked = !!caps.router && localStorage.getItem('ct_router')==='1';
   syncRouterUI();
   setupCutAlgo();
+  // Recognizer: the server's choices; a saved pick it no longer offers falls back
+  // to its default. One choice = nothing to pick, so no row.
+  const sxms=caps.soniox_models||[];
+  sxModelSel.innerHTML='';
+  for(const m of sxms){ const o=document.createElement('option'); o.value=m; o.textContent=m; o.title=SX_MODEL_HELP[m]||''; sxModelSel.appendChild(o); }
+  sxModelSel.value=sxms.includes(sxModelSel.dataset.want) ? sxModelSel.dataset.want : (caps.soniox_model||sxms[0]||'');
+  $('sxModelWrap').classList.toggle('hide', !caps.stt_stream || sxms.length<2);
+  syncSxModelHelp();
   // Offer only backends the server actually has a key for, so a provider that
   // can't speak never appears in the picker.
   const provs=(caps.tts_providers||[]).map(p=>p.id);
@@ -2587,7 +2604,7 @@ function saveSettings(){
   const s={gain:gainEl.value,pace:paceEl.value,paceV:2,
            wallWps:wallWps.value,wallDwell:wallDwell.value,wallHighlight:wallHighlight.value,
            wallLines:wallLines.value,
-           device:deviceSel.value,tts:ttsBox.checked,
+           device:deviceSel.value,sxModel:sxModelSel.value||sxModelSel.dataset.want||"",tts:ttsBox.checked,
            langs:langs.join(','),autoFlip,
            // autoMode (may a detector move the badge?) persists; serviceMode
            // itself deliberately does not -- see setServiceMode.
@@ -2654,6 +2671,7 @@ function loadSettings(){
   // A saved choice the menus no longer offer (1/4/5 lines, 70/150%) falls back.
   if(s.wallLines!=null){ wallLines.value=s.wallLines; if(wallLines.value) wallLines.dataset.saved='1'; else wallLines.value='3'; }
   if(s.device!=null)deviceSel.dataset.want=s.device;
+  if(s.sxModel)sxModelSel.dataset.want=s.sxModel;       // applied in loadCaps, once the choices exist
   // Stashed rather than applied: caps.target_languages doesn't exist until /caps
   // lands, so the tick list is validated and applied in buildLangMenus.
   if(s.langs)langBtn.dataset.want=s.langs;
@@ -2928,7 +2946,7 @@ function redemptionMs(){ return REDEMPTION_MS; }                           // si
 const PACE=[
   // Soniox: the Pace rule alone, no classifier -- Soniox's punctuation decides
   // (the old Pronto numbers). English sermon, hand-graded: 100% clean, 8 words,
-  // 1.86 / 4.36 s, where the classifier's Pronto was 96.5% (99.1% with its
+  // 1.86 / 4.36 s, where the classifier's Pronto was 96.5% (98.8% with its
   // English guard), 7 words, 1.73 / 3.99 s. Roman against the gold: 96.7%,
   // 7 words, 1.59 / 3.37 s (classifier Pronto 96.5%, 6, 1.45 / 3.16 s).
   // validation/results/2026-10-10-english-pace
@@ -3028,6 +3046,8 @@ async function refreshDevices(){
 if(navigator.mediaDevices && navigator.mediaDevices.addEventListener)
   navigator.mediaDevices.addEventListener('devicechange',refreshDevices);
 deviceSel.addEventListener('change',()=>{ saveSettings(); renderStrip(); if(listening){ stop(); start(); } });
+sxModelSel.addEventListener('change',()=>{ sxModelSel.dataset.want=sxModelSel.value; syncSxModelHelp(); saveSettings();
+  if(listening){ stop(); start(); } });
 
 async function start(){
   // Soniox streaming is a different pipeline (continuous stream + Soniox's own
@@ -3468,9 +3488,10 @@ function connectSonioxSocket(){
                      sample_rate:sonioxCtx.sampleRate,
                      endpoint_ms:SX_ENDPOINT_MS,
                      ep_adjust:epAdjust(), ep_sens:epSensitivity(),
+                     sx_model:sxModel(),
                      translate_to:sxTranslating?(p?'auto':langs[0]):null,
                      ...(selectedEars().length?{ears:selectedEars()}:{})})); }catch(e){}
-    log('info','Soniox stream open · '+sonioxCtx.sampleRate+'Hz · '
+    log('info','Soniox stream open · '+sxModel()+' · '+sonioxCtx.sampleRate+'Hz · '
         +dirLabel());
     // Reopened after a hold: the kept audio goes first, back to back. The frames
     // are contiguous with the live ones that follow (everything up to this
@@ -4428,7 +4449,7 @@ const CUT_RULES={
   // weights know Romanian function words only (de, la, pe... weigh -0.6 to -0.7);
   // English "the", "of", "my", "will" looked neutral and the bar or the cap cut
   // there ("on my | face"). English sermon, hand-graded, clean cuts Pronto /
-  // Moderato / Lento 96.5 / 89.8 / 91.2% -> 99.1 / 93.0 / 95.3%; Roman unchanged
+  // Moderato / Lento 96.5 / 89.8 / 91.2% -> 98.8 / 93.0 / 95.3%; Roman unchanged
   // (validation/results/2026-10-10-english-pace).
   clf0: {model:'nosat', thr:0.85, lo:null, decay:0,    from:6, min:3, cap:18, sil:0.5, k0:'tc', noEnd:2},
   // A 12-word hard cap for Pronto (the chunk gold's pieces: median 4 words,
@@ -5088,6 +5109,7 @@ async function routerTranslate(text,lang,model,flagged,span,clues){
         if(m.type==='final'){ noteLat('mt',performance.now()-t0); ctl.abort();
           setDot(mtDot,'live',model+' answered the last line sent on');
           if(m.clue_cut) log('warn',model+' copied the Decision Router clue: '+m.clue_cut+' word(s) cut before display');
+          if(m.clue_dropped) log('warn',model+' ran past the caption on a line the Router sent on: dropped, Soniox kept');
           setCacheLight(m.cache,model);
           const t=(m.text||'').trim(); return t?{text:t,ears:m.ears||null}:null; }
         if(m.type==='error'){ setDot(mtDot,'error',model+': '+(m.error||'failed')); return null; }

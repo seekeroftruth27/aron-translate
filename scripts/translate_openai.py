@@ -39,7 +39,7 @@ import threading
 import time
 
 # Shared prompting/hardening -- one source of truth in translate_claude.
-from translate_claude import (SYSTEM_PROMPT, LANGUAGES, TARGET_LANGUAGES, anchored_turn,
+from translate_claude import (SYSTEM_PROMPT, LANGUAGES, TARGET_LANGUAGES, chat_turns,
                               DEFAULT_TARGET_LANG, _strip_meta, _tag_for,
                               history_turns, system_prompt_for)
 
@@ -190,7 +190,7 @@ def _build_payload(text, history, model, target_lang, stream, draft=None, pair=N
     tag = _tag_for(target_lang)
     messages = [{"role": "system", "content": system_prompt_for(pair, expressive)}]
     messages += history_turns(history, tag)
-    messages.append({"role": "user", "content": anchored_turn(tag, text, draft)})
+    messages += chat_turns(tag, text, draft)        # a Router clue: its own system message
     real = FAST_TIER.get(model, model)
     payload = {
         "model": real,

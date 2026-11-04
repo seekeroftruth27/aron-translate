@@ -117,6 +117,10 @@ from flask_sock import Sock   # WebSocket routes on the same threaded dev server
 # soundfile -- nothing loads locally, and the live TTS path decodes nothing: the
 # provider's own mp3 bytes are relayed straight to the browser as they arrive.
 SONIOX_RT_MODEL = os.environ.get("CT_SONIOX_MODEL", "stt-rt-v5")
+# The page's Recognizer menu: the stream opens on whichever of these the operator
+# picked (hello's sx_model), the default otherwise. v6 (2026-11) mis-hears less
+# and puts words on screen later; validation/results/2026-11-03-soniox-v6/.
+SONIOX_RT_CHOICES = list(dict.fromkeys(["stt-rt-v5", "stt-rt-v6", SONIOX_RT_MODEL]))
 SONIOX_WS_URL = "wss://stt-rt.soniox.com/transcribe-websocket"
 HAS_SONIOX_KEY = bool(os.environ.get("SONIOX_API_KEY"))
 HAS_EL_KEY = bool(os.environ.get("ELEVENLABS_API_KEY"))   # TTS only
@@ -127,7 +131,7 @@ from translate_claude import (translate_stream as claude_translate_stream,
                               ascii_key_problem,
                               last_cache_stats as claude_cache_stats,
                               looks_like_meta as claude_looks_like_meta,
-                              ReplayGuard, VoiceTagFilter, clue_at,
+                              ReplayGuard, VoiceTagFilter, clue_at, clue_cut_at, clue_tail,
                               unsure_turn, drop_unsure_marks,
                               DEFAULT_MODEL, ALLOWED_MODELS, DEFAULT_TARGET_LANG, NO_UNSURE_HINT,
                               LANGUAGES, TARGET_LANGUAGES, SOURCE_LANGUAGES)
@@ -1699,7 +1703,8 @@ def stt_stream(ws):
     Protocol (browser side):
       1. first text frame: {"hints": [<code>, ...], "sample_rate": N, "endpoint_ms": M,
                             "translate_to": <code>|"auto"|null,
-                            "ep_adjust": 0-3, "ep_sens": -1.0..1.0}
+                            "ep_adjust": 0-3, "ep_sens": -1.0..1.0,
+                            "sx_model": one of SONIOX_RT_CHOICES (default SONIOX_RT_MODEL)}
          ("source": <code>|"auto" is still accepted as the older single-hint form.)
       2. then binary frames = PCM audio; text frames = control {"type":"finalize"|"stop"}
     We forward token messages as-is and tally processed audio into the credit meter."""
@@ -1721,13 +1726,14 @@ def stt_stream(ws):
     sample_rate = int(hello.get("sample_rate") or 16000)
     endpoint_ms = int(hello.get("endpoint_ms") or 0)
     ep_adjust, ep_sens = _endpoint_tuning(hello)
+    sx_model = hello.get("sx_model") if hello.get("sx_model") in SONIOX_RT_CHOICES else SONIOX_RT_MODEL
     # Soniox's own translation, asked for only under the model "none, fast", where
     # it IS the caption. Its tokens come back on the SAME stream tagged
     # translation_status="translation" (originals stay "original").
     translate_to = (hello.get("translate_to") or "").lower()
     config = {
         "api_key": os.environ["SONIOX_API_KEY"],
-        "model": SONIOX_RT_MODEL,
+        "model": sx_model,
         "audio_format": "pcm_s16le",
         "sample_rate": sample_rate,
         "num_channels": 1,
@@ -1797,7 +1803,7 @@ def stt_stream(ws):
         ep_note += f", ep_adjust={ep_adjust}"
     if ep_sens:
         ep_note += f", ep_sens={ep_sens:+.2f}"
-    print(f"[stream] Soniox RT open [hints={hints or 'auto'}, {sample_rate}Hz"
+    print(f"[stream] Soniox RT open [{sx_model}, hints={hints or 'auto'}, {sample_rate}Hz"
           + xl_note + ep_note + "]", flush=True)
 
     # The operator just hit Start, so the first spoken sentence is seconds away.
@@ -2539,7 +2545,9 @@ def translate_ep():
             return
         if tags:
             full += tags.flush()
-        body = full[:clue_at(full)] if clued else full
+        # Finished: the English opening words, or a copy in any language by its
+        # length (translate_claude.clue_overrun) -- 2026-11-01's was in Romanian.
+        body = full[:clue_cut_at(full, text, draft["en"])] if clued else full
         if skip is None:                  # the reply ended while still being judged
             skip = replay.cut(body, final=True)
         if not suppressed:
@@ -2574,6 +2582,16 @@ def translate_ep():
         out = claude_strip_meta(body[skip:].strip())
         replayed = body[:skip].split()
         clue_cut = full[len(body):].split()
+        # Still more than the caption after the cut (a short copied fragment):
+        # dropped whole -- the page keeps Soniox's line (translate_claude.clue_tail).
+        clue_dropped = bool(clued and out and clue_tail(out, text, draft["en"]))
+        if clue_dropped:
+            print(f"[mt ] WARNING: {used_model} ran past the caption on a sent-on line -- "
+                  f"dropped, Soniox's line kept: {out[:100]!r}", flush=True)
+            src = text if len(text) <= 60 else text[:59].rstrip() + "…"
+            _server_warn(f"Router: {used_model} ran past the caption for «{src}»"
+                         f" — dropped, Soniox's line kept", kind="clue")
+            out = ""
         _note_latency(used_model, dt)
         if replayed:
             print(f"[mt ] replay: dropped {len(replayed)} leading word(s) restating earlier "
@@ -2628,6 +2646,7 @@ def translate_ep():
                           "cache": cache,
                           **({"replayed": len(replayed)} if replayed else {}),
                           **({"clue_cut": len(clue_cut)} if clue_cut else {}),
+                          **({"clue_dropped": True} if clue_dropped else {}),
                           **({"tag": tags.tag} if tags and tags.tag else {}),
                           # the ears' readings the translator was given (shown under the source)
                           **({"ears": readings} if readings and used_model == model else {})}) + "\n"
@@ -3151,7 +3170,7 @@ def _session_server_info(since=0):
     return {
         "version": APP_VERSION,
         "frozen": bool(getattr(sys, "frozen", False)),
-        "stt": {"provider": "Soniox", "model": SONIOX_RT_MODEL},
+        "stt": {"provider": "Soniox", "model": SONIOX_RT_MODEL, "choices": SONIOX_RT_CHOICES},
         "ears": [{"name": n, "label": label, "model": model, "configured": n in avail}
                  for n, (label, model) in extra_ears.models().items()],
         "ears_enabled": EARS_ENABLED,
@@ -3921,7 +3940,8 @@ def caps_ep():
         router_timeout_ms=ROUTER_TIMEOUT_MS,
         router_th=ROUTER_TH,                           # named in the session record
         router_model=router_gate.MODEL,                # named in the session record
-        soniox_model=SONIOX_RT_MODEL,
+        soniox_model=SONIOX_RT_MODEL,                  # the Recognizer menu's default
+        soniox_models=SONIOX_RT_CHOICES,               # ... and its choices
         ear_wait_ms=EAR_WAIT_MS,
         tts_providers=[{"id": p, "name": n} for p, n in TTS_PROVIDERS],
         tts_provider=DEFAULT_TTS_PROVIDER,

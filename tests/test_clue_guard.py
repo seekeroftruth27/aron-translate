@@ -39,6 +39,19 @@ REPRO = {"text": "Fraților, Domnul este păstorul meu, nu voi duce lipsă de ni
          "reply": "Brothers, the Lord is my shepherd; I shall not want.\n\n"
                   + tc.FLAGGED_RULE.format(en=_EN, why=tc.FLAGGED_WHY["translation"])}
 
+# Live, 2026-11-01 evening (emanuel-church.com transcript, [1:31:55]): an English
+# sermon captioned into Romanian. The model copied the block TRANSLATED, which the
+# English opening words cannot match; it reached the wall, the voice and the website.
+_RO = "Ce este maturitatea spirituală?"
+SUNDAY = {"text": "What is spiritual maturity?", "flagged": {"en": _RO, "why": "translation"},
+          "caption": _RO, "target": "ro", "pair": ["ro", "en"],
+          "reply": _RO + " Un traducător automat rapid a tradus același segment astfel: " + _RO
+                   + " Un verificator s-a îndoit de această traducere: ar putea fi greșită, literală "
+                   "sau nefirească. Considerați-o doar un indiciu. Acolo unde transcrierea de mai sus "
+                   "este neclară, ea poate arăta ce a vrut să spună vorbitorul; dar poate conține chiar "
+                   "eroarea semnalată. Traduceți singuri segmentul și nu păstrați niciodată o formulare "
+                   "pe care nu ați fi ales-o."}
+
 # Captions that must come through exactly as they are.
 ORDINARY = [
     "A fast car stopped outside the church.",
@@ -119,6 +132,51 @@ class ClueAt(unittest.TestCase):
                     self.assertTrue(b.startswith(a), (text, a, b))
                 self.assertEqual(shown[-1], text)
 
+    def test_a_translated_copy_is_cut_by_its_length(self):
+        for case in (SUNDAY, LIVE, REPRO):
+            reply = case["reply"]
+            cut = tc.clue_cut_at(reply, case["text"], case["flagged"]["en"])
+            self.assertEqual(reply[:cut].strip(), case["caption"])
+        # the English-only match alone misses Sunday's
+        self.assertEqual(tc.clue_at(SUNDAY["reply"]), len(SUNDAY["reply"]))
+
+    def test_honest_replies_are_never_cut_by_length(self):
+        cases = [
+            # two sentences, the clue about as long as the reply
+            ("Și Domnul a zis: Ieșiți. Și au ieșit toți.", "And the Lord said: Go out. And they all went out.",
+             "And the Lord said, Go out. And they all went out."),
+            # a short (bad) clue next to a long source: the source is the yardstick
+            ("Fraților, astăzi vom citi împreună din Evanghelia după Ioan, capitolul trei.", "Brothers.",
+             "Brothers, today we will read together from the Gospel of John, chapter three."),
+            # an expanded fragment, as RUNAWAY_SLACK allows
+            ("Așa că eu.", "So I.", "So, as for me, I would say this."),
+        ]
+        for src, clue, reply in cases:
+            self.assertEqual(tc.clue_cut_at(reply, src, clue), len(reply), reply)
+        for text in ORDINARY:                 # each with a clue as long as itself, as an honest reply has
+            self.assertEqual(tc.clue_overrun(text, text, text), len(text), text)
+
+    def test_a_short_copied_fragment_drops_the_reply(self):
+        # too short for any length rule; dropping it keeps Soniox's line on the page
+        for src, clue, reply in [("Nu.", "No.", "No. A checker doubted it:"),
+                                 ("Amin.", "Amin.", "Amin. Un verificator a pus la îndoială traducerea:"),
+                                 ("What is spiritual maturity?", _RO, _RO + " Considerați-o doar un indiciu.")]:
+            self.assertTrue(tc.clue_tail(reply, src, clue), reply)
+        for case in (SUNDAY, LIVE, REPRO):          # after the cut, a whole copy is only the caption
+            reply = case["reply"]
+            kept = reply[:tc.clue_cut_at(reply, case["text"], case["flagged"]["en"])].strip()
+            self.assertFalse(tc.clue_tail(kept, case["text"], case["flagged"]["en"]), kept)
+
+    def test_honest_replies_are_not_dropped(self):
+        for src, clue, reply in [
+                ("Și Domnul a zis: Ieșiți. Și au ieșit toți.", "And the Lord said: Go out. And they all went out.",
+                 "And the Lord said, Go out. And they all went out."),
+                ("Ce este maturitatea spirituală?", "What is spiritual maturity?", "What is spiritual maturity?"),
+                ("Amin.", "Amen.", "Amen.")]:
+            self.assertFalse(tc.clue_tail(reply, src, clue), reply)
+        for text in ORDINARY:
+            self.assertFalse(tc.clue_tail(text, text, text), text)
+
     def test_a_tail_like_the_clue_waits_a_word_at_most(self):
         self.assertEqual("No. A"[:tc.clue_at("No. A", final=False)], "No. ")
         self.assertEqual("No. A fast "[:tc.clue_at("No. A fast ", final=False)], "No. ")
@@ -144,6 +202,7 @@ class TranslateEndpoint(unittest.TestCase):
         cls.client = server.app.test_client()
 
     def post(self, case, reply, chunk=3, flagged=True):
+        target = case.get("target", "en")
         sent = {}
 
         def model(text, draft=None, **_):
@@ -156,8 +215,9 @@ class TranslateEndpoint(unittest.TestCase):
         with mock.patch.object(s, "_provider_for", lambda m: model), \
                 mock.patch.object(s, "HAS_OPENAI_KEY", True):
             r = self.client.post("/translate", json={
-                "text": case["text"], "target_lang": "en", "model": "gpt-6.1-terra-fast",
-                "tts": False, **({"flagged": case["flagged"]} if flagged else {})})
+                "text": case["text"], "target_lang": target, "model": "gpt-6.1-terra-fast",
+                "tts": False, **({"flagged": case["flagged"]} if flagged else {}),
+                **({"pair": case["pair"]} if case.get("pair") else {})})
             lines = [json.loads(x) for x in r.get_data(as_text=True).splitlines() if x.strip()]
         return lines, sent
 
@@ -180,6 +240,30 @@ class TranslateEndpoint(unittest.TestCase):
                 self.assertEqual((w["level"], w["kind"]), ("warn", "clue"))
                 self.assertIn("gpt-6.1-terra-fast", w["msg"])
 
+    def test_a_translated_copy_never_reaches_the_final(self):
+        # The page shows a Router reply's final only (routerTranslate): that, the
+        # history and the warning must hold the caption alone.
+        s = self.server
+        for chunk in (1, 4, 9):
+            n0 = len(s.SERVER_WARNINGS)
+            lines, _ = self.post(SUNDAY, SUNDAY["reply"], chunk)
+            final = [m for m in lines if m["type"] == "final"][-1]
+            self.assertEqual(final["text"], SUNDAY["caption"])
+            self.assertEqual(final["clue_cut"], len(SUNDAY["reply"].split()) - len(SUNDAY["caption"].split()))
+            (_, src, tgt, lang), = s.HISTORY["en-ro"]
+            self.assertEqual((src, tgt, lang), (SUNDAY["text"], SUNDAY["caption"], "ro"))
+            self.assertEqual(len(s.SERVER_WARNINGS), n0 + 1)
+
+    def test_a_short_fragment_drops_the_final(self):
+        s = self.server
+        case = {"text": "Nu.", "flagged": {"en": "No.", "why": "misheard"}}
+        lines, _ = self.post(case, "No. A checker doubted it:")
+        final = [m for m in lines if m["type"] == "final"][-1]
+        self.assertEqual(final["text"], "")
+        self.assertTrue(final["clue_dropped"])
+        self.assertEqual(len(s.HISTORY["en"]), 0)               # nothing kept as context
+        self.assertEqual(s.SERVER_WARNINGS[-1]["kind"], "clue")
+
     def test_the_session_record_carries_the_warning(self):
         s = self.server
         lines, _ = self.post(LIVE, LIVE["reply"])
@@ -193,7 +277,9 @@ class TranslateEndpoint(unittest.TestCase):
     def test_a_reply_without_the_clue_is_unchanged(self):
         for flagged in (True, False):
             for text in ORDINARY[:-1]:
-                lines, _ = self.post(LIVE, text, chunk=2, flagged=flagged)
+                # the source and clue as long as the reply, as for an honest translation
+                case = {"text": text, "flagged": {"en": text, "why": "misheard"}}
+                lines, _ = self.post(case, text, chunk=2, flagged=flagged)
                 final = [m for m in lines if m["type"] == "final"][-1]
                 self.assertEqual("".join(m["text"] for m in lines if m["type"] == "delta"), text)
                 self.assertEqual(final["text"], text.strip())

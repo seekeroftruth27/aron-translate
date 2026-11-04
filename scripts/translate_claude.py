@@ -180,6 +180,28 @@ FLAGGED_WHY = {
 }
 
 
+# Where the clue sits. After the source in the same user turn (anchored_turn, the
+# Claude and Gemini backends, whose system prompt is the cached top of the
+# request) gpt-6.1-terra copied it into the caption: 20 of 48 replies to "Amen."
+# into Romanian (2026-11-03). As a system message of its own just before that
+# turn -- chat backends only (OpenAI, xAI) -- it was copied 0 of 48 times and
+# helped as much (26 of 54 mis-hears right, against 27 inline and 21 with no
+# clue). Its own USER message stopped the copying too, but the model then ignored
+# it (21 of 54). validation/results/2026-11-03-clue-leak-any-language/.
+CLUE_NOTE_HEAD = "About the next segment only (never part of a caption):\n"
+
+
+def chat_turns(tag, text, draft=None):
+    """The chat messages that close a request: the user turn, and for a Router
+    clue a system message before it carrying the clue (see above)."""
+    if isinstance(draft, dict) and (draft.get("en") or "").strip():
+        rule = FLAGGED_RULE.format(en=draft["en"].strip(),
+                                   why=FLAGGED_WHY.get(draft.get("why"), FLAGGED_WHY["translation"]))
+        return [{"role": "system", "content": CLUE_NOTE_HEAD + rule},
+                {"role": "user", "content": f"{tag} {text}"}]
+    return [{"role": "user", "content": anchored_turn(tag, text, draft)}]
+
+
 def anchored_turn(tag, text, draft=None):
     """The current user turn: the tagged source, plus the draft-anchoring block
     when a draft was supplied. Shared by all three backends (Claude/OpenAI/xAI)
@@ -556,13 +578,18 @@ _META_SUPPRESS = re.compile(
     r"\btranslation engine\b"
     r"|\bI (?:do not|don't|cannot|can't) (?:converse|chat)\b"
     r"|→[A-Za-z]+:"                                        # the target-language tag leaking
-    r"|\b(?:source|intended) language\b"                   # language-ID meta
+    # language-ID meta ("the source language appears to be ..."); NOT a preacher's
+    # "the source language of this text is Hebrew" (2026-11-03 stress test)
+    r"|\b(?:source|intended) language (?:appears|seems|is (?:unclear|ambiguous|uncertain|not clear))\b"
     r"|\bfollowing my instructions\b"
     r"|\bthese instructions\b"
     r"|\bappears? to be (?:written )?in \w+,\s*not \w+"    # "appears to be in Spanish, not Romanian"
     r"|\bcannot be certain of the (?:intended )?(?:language|meaning)\b"
     r"|\bconfirm (?:the )?(?:source |intended )?language\b"
-    r"|\bprovide (?:the |more )?(?:full )?context\b"
+    # asked of the operator ("... so I can translate"), not a preacher's "provide
+    # the full context before you judge this passage"
+    r"|\bprovide (?:the |more |some )?(?:full )?context(?=\s*(?:[.?!]|$|so\b|for (?:me|the translation|translation)\b"
+    r"|to (?:translate|help)\b|and I\b))"
     # Refusals / "the speech-to-text is broken" meta -- a preacher's speech never
     # contains these, but a role-breaking model does (this exact class leaked
     # once: "I cannot translate this ... does not form a coherent Romanian
@@ -572,12 +599,15 @@ _META_SUPPRESS = re.compile(
     # rendering of a preacher musing about translation ("nu stiu cum s-ar
     # traduce in engleza"), not a role-break. The refusal register is
     # "translate this/it" + stop or a quality complaint, never "into <language>".
-    r"|\bI (?:cannot|can't|can not|am unable to|couldn't) translate (?:this|it|that|the\b)(?!\s+into\b)"
+    # ("this word into Romanian" too: the "into" may come a few words later)
+    r"|\bI (?:cannot|can['’]t|can not|am unable to|couldn['’]t) translate (?:this|it|that|the\b)"
+    r"(?!(?:\s+[\w'’-]+){0,4}\s+into\b)"
     r"|\bcorrupted speech-to-text\b"
     r"|\bdoes not (?:form|appear to be) a (?:coherent|complete|proper|valid|grammatical|meaningful)\b"
     r"|\bprovide (?:the |a )?(?:full|complete|whole|entire) (?:sentence|phrase|message)\b"
     r"|\bI'?ll translate it (?:accurately|correctly|properly)\b"
-    r"|\bno translation (?:provided|possible|available|is possible)\b"
+    # the refusal ends there; "no translation is possible FOR this word" is a sermon
+    r"|\bno translation (?:provided|available|(?:is )?possible)\b(?!\s+(?:for|in|into|of)\b)"
     r"|\binput is too (?:brief|short|vague|unclear|incomplete|ambiguous)\b"
     r"|\btoo (?:brief|short|vague|fragmentary|garbled|incomplete) to (?:translate|be translated)\b",
     re.IGNORECASE,
@@ -672,7 +702,10 @@ def _strip_meta(text):
     if re.fullmatch(r"\s*[(\[][^)\]]{0,200}[)\]]\s*", text):
         return ""
     lines = [ln for ln in text.splitlines()]
-    while lines and re.match(r"^\s*[\(\[]?\s*(note|translation note|n\.?b\.?|explanation)\b",
+    # A trailing note the model appended, on its own line AFTER the caption. A
+    # caption that is itself one "Note: ..." line is the speaker's ("Notă: în
+    # unele manuscrise acest verset lipsește.") and stays.
+    while len(lines) > 1 and re.match(r"^\s*[\(\[]?\s*(note|translation note|n\.?b\.?|explanation)\b",
                              lines[-1], re.IGNORECASE):
         lines.pop()
     text = "\n".join(lines).strip()
@@ -782,8 +815,9 @@ class ReplayGuard:
 # carried it (1 row of 523; reproduced the next day on a fresh server with no
 # history). No part of the block is ever caption text, so a reply is cut where
 # its opening words begin and the rest is dropped -- before the caption is shown,
-# spoken, published or kept as context. Matched whatever the case and spacing; a
-# clue the model translates into the target language instead is not caught.
+# spoken, published or kept as context. Matched whatever the case and spacing. A
+# clue the model translates into the target language is caught by its length
+# instead (clue_overrun, below).
 _CLUE = re.compile(r"\b" + r"\s+".join(map(re.escape, CLUE_HEAD.split())) + r"\b", re.I)
 _CLUE_KEY = " ".join(CLUE_HEAD.lower().split()) + " "
 _CLUE_WORDS = len(CLUE_HEAD.split())
@@ -808,6 +842,53 @@ def clue_at(text, final=True):
             if _CLUE_KEY.startswith(re.sub(r"\s+", " ", text[start:].lower())):
                 return start
     return len(text)
+
+
+# The same copy in any language. On 2026-11-01 an English sermon captioned into
+# Romanian came back as "Ce este maturitatea spirituală? Un traducător automat
+# rapid a tradus același segment astfel: ..." -- the whole block, translated, 478
+# characters for "What is spiritual maturity?" -- and clue_at, which knows only the
+# English words, let it through to the wall, the voice and the website. What does
+# not depend on the language is the length: the clue is itself a translation of
+# this segment into this language, so a reply cannot honestly run to several
+# times it (or the source); the block, copied whole, always does, and always
+# after a complete caption. Such a reply is cut at its first sentence end past
+# 0.6x that yardstick. A reply within OVERRUN_RATIO x yardstick + OVERRUN_SLACK
+# is never touched.
+OVERRUN_RATIO, OVERRUN_SLACK = 2, 20
+_SENT_END = re.compile(r"[.?!…。？！]+[\"'”’»)\]]*(?=\s|$)")
+
+
+def clue_overrun(text, src, clue):
+    """How much of a finished clued reply may be shown: all of it, or up to the
+    sentence end that closes the caption when the reply overruns (see above)."""
+    yard = max(len((clue or "").strip()), len((src or "").strip()))
+    if len(text.rstrip()) <= OVERRUN_RATIO * yard + OVERRUN_SLACK:
+        return len(text)
+    ends = [m.end() for m in _SENT_END.finditer(text)]
+    first = next((e for e in ends if e >= 0.6 * yard), None)
+    return first if first is not None else len(text)
+
+
+def clue_cut_at(text, src, clue):
+    """clue_at and clue_overrun together, for a finished reply."""
+    return min(clue_at(text), clue_overrun(text, src, clue))
+
+
+def _pieces(text):
+    """Sentences, counting an unfinished tail as one more ("He said. And then" = 2)."""
+    text = (text or "").strip()
+    ends = [m.end() for m in _SENT_END.finditer(text)]
+    return len(ends) + (1 if text[ends[-1] if ends else 0:].strip() else 0)
+
+
+def clue_tail(text, src, clue):
+    """True when a clued reply (already cut by clue_cut_at) has more pieces than
+    the source and the clue both -- "No. A checker doubted it:", a short copied
+    fragment no length rule can see. Dropping is preferred to showing it: the
+    page then keeps Soniox's line. Pieces, not sentence ends, so a caption that
+    stops mid-sentence like its source ("He said. And then") is not dropped."""
+    return _pieces(text) > max(_pieces(src), _pieces(clue), 1)
 
 
 SYSTEM_PROMPT = build_system_prompt()
