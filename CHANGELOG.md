@@ -1,5 +1,49 @@
 # Changelog
 
+## [v2.20.0] — 2026-11-07
+
+### Added
+- **The ProPresenter box can wait for a Look.** With `CT_PROPRESENTER_FOLLOW_MIC=1`,
+  set `CT_PROPRESENTER_LOOK` to the name (or uuid) of the audience Look that carries
+  the translation box: Áron then shows the Message only while the translation is on
+  **and** that Look is live, clears it when ProPresenter switches to another Look, and
+  brings it back on switching back. Empty keeps the old behaviour (any Look). Needs
+  ProPresenter 7.9 or later.
+- **Gate prayer (Settings › Listen, Experimental).** It mutes the mic while the
+  congregation prays aloud together, the same way Gate music mutes it for songs: the
+  Soniox stream is closed, the Mic button reads Muted, and it reopens by itself when
+  one voice is speaking again. Soniox latches onto the loudest voice in communal
+  prayer and writes plausible but garbled text at normal confidence, and YAMNet calls
+  it speech, so the detector reads the sound itself. It measures how deeply the
+  loudness dips between syllables and how clean the pitch is, over 6 s; a room of
+  voices smooths both out. It leans toward the speaker: a few words of a prayer may
+  reach the wall, but one clear window stops a hold from starting, and a clear voice
+  louder than the room ends one at once. On four prayers of one recorded service it
+  held 9-44 s after each began and let go within about a second of the speaker
+  returning; across five sermons it never held. What counts as too quiet to judge
+  follows the feed's own level, so it behaves the same with the input 20 dB quieter or
+  hotter. Tuned on one service so far: the diagnostics panel shows the live score, and
+  the session record shows the switch and each change of mode.
+  `validation/results/2026-11-04-prayer-gate/`, `validation/results/2026-11-05-prayer-snappy/`.
+- **What the detectors hear, right of the level bar.** A small label reads **Speech**
+  while listening, **Music** or **Prayer** in amber while that detector is muting the
+  mic, and a faint **Music?** or **Prayer?** while one hears it without muting (its Gate
+  is off, or it is still making sure). It has a fixed width, so nothing beside it moves.
+  When both detectors hear something, music wins: the prayer gate never closes while
+  the music detector hears music, and the music detector takes over a prayer hold.
+- **Tongues gate.** A caption Soniox tags as a language nobody in the room speaks is kept
+  off the wall, the voice and every output. The transcript still shows it, marked "(not a
+  language of this service)". This is meant for speaking in tongues with no interpreter, which
+  Soniox would otherwise write as made-up words for the translator to caption. The room's
+  languages are the pair, or one-way the target plus the service's own language, which is
+  learned from the captions that pass and remembered. It works on the translator path and
+  on Soniox's own captions ("none, fast" and the Router). Played Māori (a language Soniox
+  does not know) inside a Romanian sermon, Soniox wrote it as Swahili, Hebrew, Macedonian or
+  Japanese at normal confidence, and every Māori line was held. Across all our recorded
+  sermons and services, no line was held. A second check holds lines whose confidence is
+  below anything a real service has produced. `CT_TONGUE_GATE=drop` (default), `watch` (log
+  only) or `off`. `validation/results/2026-11-04-tongues-gate/`.
+
 ## [v2.19.0] — 2026-11-03
 
 ### Added
