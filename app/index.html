@@ -184,6 +184,15 @@
   #thresh { background:var(--warn); }
   .meter > .zone { position:absolute; top:0; bottom:0; pointer-events:none; }
   .meter > .zone.speech { background:var(--ok-soft); }
+  /* What the detectors hear, right of the level bar: Speech, or Music / Prayer --
+     amber while that detector is muting the mic, with a "?" while it hears it but
+     is not muting (its Gate is off, or it is still making sure). A fixed width,
+     kept when hidden, so Pace, Voice and Wall never move. */
+  #hearChip { display:inline-flex; align-items:center; gap:6px; width:5.2em; font-size:12.5px; font-weight:600;
+              color:var(--text-3); white-space:nowrap; }
+  #hearChip::before { content:""; width:7px; height:7px; border-radius:50%; background:currentColor; flex:none; }
+  #hearChip.holding { color:var(--warn); }
+  #hearChip[hidden] { display:inline-flex; visibility:hidden; }
   #drift { font-size:12.5px; color:var(--text-2); font-variant-numeric:tabular-nums; }
   #drift:empty { display:none; }
   /* Reserved for PROBLEMS only -- mic/worklet failures, reconnects, the auto-stop.
@@ -390,7 +399,7 @@
   #diagNetOut .lcval { flex:0 0 auto; color:var(--text-soft); font-variant-numeric:tabular-nums;
                        font-family:ui-monospace,Menlo,Consolas,monospace; }
   #diagNetOut .lcnote { color:var(--text-soft); font-size:.66rem; margin-top:.3rem; opacity:.85; }
-  #diagMusic { margin:0; padding:.5rem .7rem; white-space:pre-wrap; font-family:ui-monospace,Menlo,Consolas,monospace;
+  #diagMusic, #diagPrayer { margin:0; padding:.5rem .7rem; white-space:pre-wrap; font-family:ui-monospace,Menlo,Consolas,monospace;
                font-size:.74rem; color:var(--text-soft); border-bottom:1px solid var(--border-soft); }
   #diagLog { max-height:30vh; overflow-y:auto; padding:.4rem .7rem; gap:.05rem;
              font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.72rem;
@@ -469,6 +478,7 @@
     <div class="meter" title="Input level"><div id="level"></div>
       <div class="zone speech" id="zSpeech" title="Speech zone."></div>
       <div class="mark" id="thresh" title="Speech threshold (per-segment fallback only)."></div></div>
+    <span id="hearChip" role="status" aria-live="polite" hidden></span>
     <span class="sdiv"></span>
     <button class="info" type="button" data-sec="listen" title="Change in Settings">Pace <b id="paceV">Moderato</b></button>
     <button class="info" type="button" data-sec="voice" title="Change in Settings">Voice <b id="voiceInfo">off</b></button>
@@ -498,6 +508,7 @@
     <div id="diagChart" title="The same averages, drawn to scale."></div>
     <div id="diagNetOut" title="Network time to each provider host."></div>
     <pre id="diagMusic" title="Live music-detector readings.">music detector  (idle)</pre>
+    <pre id="diagPrayer" title="Live prayer-detector readings (experimental).">prayer detector  (idle)</pre>
     <div id="diagLog"></div>
   </div>
 </div>
@@ -522,6 +533,8 @@
       <p class="help" id="paceHelp"></p></div>
     <label class="f" title="Keys 1 and 2 override it."><div>Gate music<p class="help">Mutes the mic while music plays.</p></div>
       <input type="checkbox" class="sw" id="autoMode"></label>
+    <label class="f" title="Mutes the mic while the congregation prays aloud together (many voices at once), measured from the sound itself. Experimental: tuned on one service so far."><div>Gate prayer<span class="exp">Experimental</span><p class="help">Mutes the mic during communal prayer.</p></div>
+      <input type="checkbox" class="sw" id="autoPrayer"></label>
     <div class="f col hide" id="earsRow" title="Extra recognizers on the same audio. On lines the Decision Router sends on, their readings go to the translator as clues. Each ticked ear is billed for the whole service.">
       <span>Extra ears<span class="exp">Experimental</span></span>
       <div id="earsBox" class="chips"></div>
@@ -735,7 +748,7 @@ const gainV=$('gainV'), paceV=$('paceV');
 // the values that tested best (see git history for the old knob defaults).
 const SPEECH_THRESHOLD=0.30, REDEMPTION_MS=500;
 const langBtn=$('langBtn'), langMenu=$('langMenu'), swapBtn=$('swapBtn'), autoBtn=$('autoBtn');
-const modeInd=$('modeInd'), autoModeBox=$('autoMode');
+const modeInd=$('modeInd'), autoModeBox=$('autoMode'), autoPrayerBox=$('autoPrayer'), hearChip=$('hearChip');
 // Stream, Expression, Stability and Tighten pauses are set in .env (CT_EL_STREAM,
 // CT_EL_EXPRESSION, CT_EL_STABILITY, CT_SX_TIGHTEN); /caps reports them. Eleven
 // v4 and v4 Turbo take no other knob, so Speed is Soniox's alone.
@@ -1074,7 +1087,7 @@ for(const b of document.querySelectorAll('.info[data-sec]'))
   b.addEventListener('click',()=>setSettingsOpen(true,b.dataset.sec));
 const clearBtn=$('clear'), debugBtn=$('debug'), themeToggleBtn=$('themeToggle');
 const diagEl=$('diag'), diagStatus=$('diagStatus'), diagUsage=$('diagUsage'), diagLog=$('diagLog');
-const diagMusic=$('diagMusic'), diagLat=$('diagLat'), diagChart=$('diagChart');
+const diagMusic=$('diagMusic'), diagPrayer=$('diagPrayer'), diagLat=$('diagLat'), diagChart=$('diagChart');
 const inkLat=$('inkLat');
 const diagRefresh=$('diagRefresh'), diagCopy=$('diagCopy'), diagClearLog=$('diagClearLog');
 const diagNet=$('diagNet'), diagNetOut=$('diagNetOut');
@@ -1458,7 +1471,7 @@ async function fetchUsage(){
 function toggleDebug(){
   diagOpen=!diagOpen; diagEl.hidden=!diagOpen; debugBtn.classList.toggle('on',diagOpen);
   debugBtn.setAttribute('aria-pressed',diagOpen?'true':'false');
-  if(diagOpen){ renderLog(); refreshStatus(); fetchUsage(); mdRenderDiag(); renderLatency(); }
+  if(diagOpen){ renderLog(); refreshStatus(); fetchUsage(); mdRenderDiag(); pgRenderDiag(); renderLatency(); }
 }
 function copyDiag(){
   const text=diagStatus.textContent+'\n\n'+diagLat.textContent
@@ -1537,12 +1550,14 @@ function jConfig(){
     'Target languages':langs.join(' + '),
     'Follow the speaker (Auto)':autoFlip,
     'Gate music':autoMode,
+    'Gate prayer (experimental)':autoPrayer,
     'Input device':optText(deviceSel)||'Default device',
     'Gain':gainEl.value+' dB',
     'Pace':pace().name,
     'Cut rule':cutAlgo(),
     'Speech-to-text':caps.stt_stream?'Soniox '+sxModel()+' (stream)':'Silero + Soniox per segment',
     'Soniox translation':sonioxTranslateWanted(),
+    'Tongues gate':(caps.tongue_gate||'drop')+(homeLang?' · home '+homeLang:''),
     'Decision Router':routerOn()?'on · '+(caps.router_model||'gpt-6-luna')+' · threshold '+Math.round(100*(caps.router_th||0.3))+'%':'off',
     'Extra ears':earsEnabled()?(selectedEars().map(n=>earLabels[n]||n).join(', ')||'none'):'off (CT_EARS=0)',
     'Wait for ears':(earWaitMs()/1000).toFixed(1)+' s',
@@ -2199,31 +2214,36 @@ autoBtn.addEventListener('click',()=>{
 // setServiceMode is deliberately the single entry point, so the detector and the
 // operator go through the same door and the override never needs special-casing.
 //
-// TWO states. Prayer was a third for a while, but it is ordinary speech
-// acoustically and there is no detector for it, so a manual-only mode bought a
-// button and no capability; it comes back with its (lexical) detector.
+// THREE states. Prayer was dropped once as "ordinary speech acoustically, no
+// detector"; it came back (2026-11-04, experimental) for COMMUNAL prayer, which is
+// not ordinary speech -- a room of voices at once -- and has its own detector
+// (see "prayer detector"). There is no manual button for it: the Mic button
+// mutes as Music, which holds the same way.
 //
 // The default is SPEAKING and it is never persisted. The two error directions
 // are wildly asymmetric -- holding a hymn wastes nothing, while a mode left shut
 // across a page reload takes the sermon off the wall in front of the room and
 // looks like a crash. Reloading into "translate everything" is the failure we
 // can afford.
-const MODE_LABEL={speaking:'Speaking',singing:'Music'};
+const MODE_LABEL={speaking:'Speaking',singing:'Music',prayer:'Prayer'};
 // What the target cell says when the gate held a unit. Phrased as a state of the
 // room, not as an error -- see .line.tgt.skip.
-const MODE_NOTE={singing:'(music — not translated)'};
+const MODE_NOTE={singing:'(music — not translated)',prayer:'(communal prayer — not translated)'};
 let serviceMode='speaking';
 // May the detector move the mode by itself? A MODE, exactly like autoFlip on the
 // direction control -- and like it, the manual action stays live while it is on,
 // so an operator correcting a bad call has nothing to remember to switch back.
 // Persisted (the operator's standing preference), unlike serviceMode itself.
 let autoMode=false;
+// The same, for the prayer detector (Gate prayer, experimental). Separate, so a
+// church can gate music without trusting the newer detector, or the other way.
+let autoPrayer=false;
 // Who put the mode where it is. Only matters when Gate music is switched OFF:
 // a hold the DETECTOR placed has just lost the thing that would have lifted it
 // (setServiceMode refuses detector calls while auto is off), so it would sit
 // shut with the socket closed and no captions until someone noticed the badge.
 // A hold the OPERATOR placed is an instruction and stays put.
-let modeByDetector=false;
+let modeByDetector=false;   // false (operator), true (music detector) or 'prayer'
 // When the mode last moved, for any reason. The music detector treats this as an
 // anti-strobe guard AND as respect for a manual correction: an operator who has
 // just overruled it gets MD_GUARD_MS before it argues back.
@@ -2231,11 +2251,13 @@ let lastModeAt=0;
 function translatingNow(){ return serviceMode==='speaking'; }
 // `fromDetector` marks a call that is a GUESS rather than an instruction. Those
 // are refused while Auto is off; an operator's click or keypress never is.
+// fromDetector is true for the music detector and 'prayer' for the prayer
+// detector; each is refused while its own Gate switch is off.
 function setServiceMode(m,why,fromDetector){
   if(!MODE_LABEL[m] || m===serviceMode) return;
-  if(fromDetector && !autoMode) return;
-  serviceMode=m; lastModeAt=performance.now(); modeByDetector=!!fromDetector;
-  jEvent('mode',{mode:m,...(why?{why}:{}),by:fromDetector?'detector':'operator'});
+  if(fromDetector && !(fromDetector==='prayer'?autoPrayer:autoMode)) return;
+  serviceMode=m; lastModeAt=performance.now(); modeByDetector=fromDetector||false;
+  jEvent('mode',{mode:m,...(why?{why}:{}),by:fromDetector==='prayer'?'prayer detector':fromDetector?'detector':'operator'});
   renderModeUI();
   log('info','service mode → '+MODE_LABEL[m].toUpperCase()
       +(translatingNow()?' — translating':' — pipeline held')
@@ -2253,16 +2275,36 @@ let ppMicState=null;
 // ...and while the room is silent: no speech for CT_PROPRESENTER_QUIET_S with the Mic on clears the
 // box too, and the next speech brings it back (the interval below).
 let ppQuiet=false;
+// ...and only while the chosen audience Look is live (CT_PROPRESENTER_LOOK): the poll
+// below asks /project/look while listening. Unknown counts as live; the server checks
+// the Look again on every show, so a wrong guess never puts the box up.
+let ppLookOk=true;
 function ppFollowMic(on){
   if(!caps.propresenter_follow_mic) return;
-  const state=(on && !ppQuiet)?'on':'off';
+  const state=(on && !ppQuiet && ppLookOk)?'on':'off';
   if(state===ppMicState) return;
   ppMicState=state;
-  if(state==='off'){ projectClear(); log('info','ProPresenter box off ('+(on?'silence':'mic off')+')'); return; }
+  if(state==='off'){ projectClear(); log('info','ProPresenter box off ('+(!on?'mic off':!ppLookOk?'another look':'silence')+')'); return; }
   fetch('/project',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'show'})})
-    .then(r=>r.ok?log('info','ProPresenter box on (mic on)'):r.json().then(d=>log('warn','ProPresenter: '+(d.error||r.status))))
+    .then(r=>r.json().catch(()=>({})).then(d=>{
+      if(!r.ok){ log('warn','ProPresenter: '+(d.error||r.status)); return; }
+      if(d.held==='look'){ ppLookOk=false; ppMicState='off'; log('info','ProPresenter box held: look '+(d.look?'"'+d.look+'" ':'')+'is not the translation look'); return; }
+      log('info','ProPresenter box on (mic on)');
+    }))
     .catch(e=>log('warn','ProPresenter failed: '+e.message));
 }
+let ppLookBusy=false;
+setInterval(()=>{
+  if(!listening){ ppLookOk=true; return; }   // stopped: forget it; the next show asks the server
+  if(!caps.propresenter_look || ppLookBusy) return;
+  ppLookBusy=true;
+  fetch('/project/look').then(r=>r.ok?r.json():null).then(d=>{
+    if(!d || typeof d.active!=='boolean' || d.active===ppLookOk) return;
+    ppLookOk=d.active;
+    log('info','ProPresenter look '+(d.look?'"'+d.look+'" ':'')+(d.active?'is live: the box may show':'is not the translation look'));
+    ppFollowMic(listening && translatingNow());
+  }).catch(()=>{}).finally(()=>{ ppLookBusy=false; });
+},2000);
 setInterval(()=>{
   const ms=(caps.propresenter_quiet_s||0)*1000;   // CT_PROPRESENTER_QUIET_S; 0 = never
   const quiet=ms>0 && listening && translatingNow() && performance.now()-lastSpeechAt>ms;
@@ -2277,13 +2319,34 @@ function renderModeUI(){
   const held=!translatingNow();
   modeInd.querySelector('.mt').textContent=held?'Muted':'Mic on';
   modeInd.setAttribute('aria-pressed',held?'true':'false');
-  modeInd.classList.toggle('auto',autoMode);
+  modeInd.classList.toggle('auto',autoMode||autoPrayer);
   modeInd.title=(held
       ? 'Muted: the pipeline is held and costs nothing. Click to unmute (1).'
       : 'Mic on: the full pipeline is running. Click to mute it, e.g. for music (2).')
-    +(autoMode?'\nGate music is on: the music detector moves this; your click overrules it.':'');
-  autoModeBox.checked=autoMode;
+    +(autoMode?'\nGate music is on: the music detector moves this; your click overrules it.':'')
+    +(autoPrayer?'\nGate prayer is on: the prayer detector moves this; your click overrules it.':'');
+  autoModeBox.checked=autoMode; autoPrayerBox.checked=autoPrayer;
   renderLights();
+}
+// The label right of the level bar: what the detectors hear. Speech by default
+// while listening; hidden (its place kept) when not. A detector's own
+// mute wins; otherwise music before prayer (a song scores as prayer too, and the
+// music detector is the one that owns it).
+// The music detector's current verdict (whether or not Gate music may act on it).
+function musicHeard(){ return yamState==='ready' && mdRaw.length>=3 && mdScore>=MD_ON; }
+function renderHearChip(){
+  let label='', holding=false, why='';
+  const music=musicHeard();
+  const prayer=pg.score!=null && pg.score<PG_ON;
+  if(listening && serviceMode==='singing' && modeByDetector===true){ label='Music'; holding=true; why='Gate music is muting the mic for music.'; }
+  else if(listening && serviceMode==='prayer'){ label='Prayer'; holding=true; why='Gate prayer is muting the mic for communal prayer.'; }
+  else if(listening && music){ label='Music?'; why=autoMode?'Music heard: Gate music mutes the mic if it lasts.':'Music heard. Gate music is off, so the mic stays on.'; }
+  else if(listening && prayer){ label='Prayer?'; why=autoPrayer?'Communal prayer heard: Gate prayer mutes the mic if it lasts.':'Communal prayer heard. Gate prayer is off, so the mic stays on.'; }
+  else if(listening){ label='Speech'; why='Neither music nor communal prayer heard.'; }
+  if(hearChip.textContent!==label) hearChip.textContent=label;
+  hearChip.hidden=!label;
+  hearChip.classList.toggle('holding',holding);
+  hearChip.title=why;
 }
 modeInd.addEventListener('click',()=>{
   setServiceMode(translatingNow()?'singing':'speaking','operator');
@@ -2308,13 +2371,25 @@ autoModeBox.addEventListener('change',()=>{
     // evidence gathered from now.
     mdOnSince=0; mdOffSince=0; lastModeAt=performance.now();
     mdRenderDiag();
-  }else if(!translatingNow() && modeByDetector){
+  }else if(!translatingNow() && modeByDetector===true){
     // Switching auto OFF while the DETECTOR is holding the pipeline: release it.
     // Unchecking the box means "stop gating music", and leaving the socket shut
     // would be the opposite -- a dead pipeline with nothing left that could
     // reopen it. An operator's own hold is untouched.
     setServiceMode('speaking','gate music switched off');
   }
+});
+autoPrayerBox.addEventListener('change',()=>{
+  autoPrayer=autoPrayerBox.checked;
+  saveSettings();
+  renderModeUI();
+  log('info','gate prayer '+(autoPrayer
+      ? 'ON — the prayer detector may hold the pipeline by itself (experimental)'
+      : 'OFF'));
+  // As for Gate music: switching on must not act on a verdict that ripened
+  // unwatched, and switching off releases a hold the detector placed.
+  if(autoPrayer){ pg.onSince=0; pg.offN=0; lastModeAt=performance.now(); pgRenderDiag(); }
+  else if(serviceMode==='prayer' && modeByDetector==='prayer') setServiceMode('speaking','gate prayer switched off');
 });
 // ---- model names and health, for the header's lights ------------------------
 // Escapes for both text and ATTRIBUTE positions (hence the quotes) -- shared by
@@ -2388,9 +2463,10 @@ function renderStageModels(){
 // caption store, on any machine. Web: shown only while Web captions is on, lit
 // by how the server's last relay to the site went.
 function renderLights(){
+  renderHearChip();
   const held=!translatingNow();
   setDot($('micDot'),!listening?'':held?'held':'live',
-    (!listening?'Not listening':held?(modeByDetector?'Muted for music by Gate music':'Muted'):'Hearing '+(optText(deviceSel)||'the default device'))
+    (!listening?'Not listening':held?(modeByDetector==='prayer'?'Muted for prayer by Gate prayer':modeByDetector?'Muted for music by Gate music':'Muted'):'Hearing '+(optText(deviceSel)||'the default device'))
     +'\nMusic detector: '+(yamState==='ready'?'ready':yamState==='error'?'unavailable':'loading')
     +(sonioxStreaming()?'':'\nSilero VAD, per segment'));
   const n=pipe.projectors||0;
@@ -2608,7 +2684,7 @@ function saveSettings(){
            langs:langs.join(','),autoFlip,
            // autoMode (may a detector move the badge?) persists; serviceMode
            // itself deliberately does not -- see setServiceMode.
-           autoMode,
+           autoMode,autoPrayer,
            model:modelSel.value,
            speed:speedEl.value,
            elVoice:elVoice.value,ttsOut:ttsOutSel.value,
@@ -2677,6 +2753,7 @@ function loadSettings(){
   if(s.langs)langBtn.dataset.want=s.langs;
   if(s.autoFlip!=null)autoFlip=!!s.autoFlip;
   if(s.autoMode!=null)autoMode=!!s.autoMode;
+  if(s.autoPrayer!=null)autoPrayer=!!s.autoPrayer;
   // Stashed rather than applied: the xAI options don't exist until /caps
   // lands, so a persisted Grok pick is re-applied in buildXaiOptions (same
   // dataset.want pattern the language menus use).
@@ -3266,8 +3343,9 @@ const SAME_LANG_MIN_SHARE=0.8;   // as pure as a flip needs to be, for the same 
 // flush's one-word tail cannot satisfy.
 const SAME_LANG_SHORT_SHARE=1, SAME_LANG_SHORT_MIN_TOKENS=3;
 function suppressMinChars(){ return Math.min(LID_MIN_CHARS, minUnitChars()); }
-function suppressionFor(text,tokenLangs){
+function suppressionFor(text,tokenLangs,conf,langLetters){
   if(!translatingNow()) return {code:serviceMode,note:MODE_NOTE[serviceMode]};
+  const tg=tongueGateFor(langLetters,conf); if(tg) return tg;
   if(sessionPair()) return null;                       // bilingual: never the gate's call
   const len=(text||'').length;
   if(len<suppressMinChars()) return null;              // too short to judge at all
@@ -3279,6 +3357,85 @@ function suppressionFor(text,tokenLangs){
   return {code:'same-lang',
           note:'(already in '+(LANG_NAMES[langs[0]]||langs[0])+')',
           detail:Math.round(st.share*100)+'% '+st.lang+(short?' · short':'')};
+}
+// ---- the tongues gate --------------------------------------------------------
+// Speaking in tongues with no interpreter (1 Cor 14:28) must not reach the wall,
+// and Soniox, which always writes SOME language, would make it into words and a
+// translator into a confident caption. What gives it away is the language Soniox
+// tags it with: one nobody in the room speaks. Played Maori (a language Soniox
+// does not know) in the middle of a Romanian sermon, Soniox wrote it as Swahili,
+// Hebrew, Macedonian or Japanese, 97-99% of its words, at a mean confidence of
+// 0.72-0.82; across ~110k words of 29 recorded sermons and services, not one word
+// was tagged outside the service's two languages. So the language is the test,
+// and confidence only a backstop for near-silence garbage: no 5 words in that
+// data averaged under 0.10 (the floor is an amen-flood), so the bar sits below it.
+// validation/results/2026-11-04-tongues-gate/.
+//
+// The room's languages: a pair says them; one-way says only the target, so the
+// HOME language is learned from what the service says, other than the target:
+// the first time, once 30 such words agree 60%; after that it is remembered
+// across services and only REPLACED once 300 words agree 80%. Held units count
+// too, or a home remembered from another service would hold today's language
+// for good (a Spanish service recovers in about two minutes), but a stretch of
+// tongues inside a service never comes near 80% of it. A replay of 25 s of
+// Romanian then 80 s of Maori showed why the bars differ: at 60% the Maori, 65%
+// of that short "service", became home and the Romanian was held.
+const TONGUE_MIN_SHARE=0.6, TONGUE_MIN_LETTERS=12;  // most of a unit's tagged letters, and a few words' worth
+const UNCLEAR_MAX_CONF=0.08, UNCLEAR_MIN_WORDS=5;    // below anything a real service produced
+// Once tongues have been held, a short fragment after them ("Иа иа те ора.",
+// 11 letters) is the same speech, not a quoted word: for this long the letter
+// floor drops to nothing. A lone "Shalom" in a sermon still needs the floor.
+const TONGUE_STICKY_MS=10000;
+let lastTongueAt=-1e9;
+const HOME_MIN_WORDS=30, HOME_MIN_SHARE=0.6, HOME_SWAP_WORDS=300, HOME_SWAP_SHARE=0.8;
+let homeLang=localStorage.getItem('ct_home_lang')||'', homeTally={}, homeTotal=0;
+function roomLangs(){
+  const p=sessionPair(); if(p) return new Set(p);
+  if(!homeLang) return null;                           // nothing heard yet to know the room by
+  return new Set([...langs,homeLang]);
+}
+function homeTop(minWords,minShare){                   // this service's most common language, once clear
+  if(homeTotal<minWords) return '';
+  let best='',n=0; for(const l in homeTally) if(homeTally[l]>n){ best=l; n=homeTally[l]; }
+  return n/homeTotal>=minShare ? best : '';
+}
+function noteHome(tokenLangs){                         // every unit heard while translating
+  if(sessionPair()) return;
+  // Only words NOT in the target count: a service that opens in English (an
+  // announcement) must not teach a one-way any->English session that the room
+  // speaks English and nothing else (a replay held 104 of 167 lines that way).
+  for(const l of tokenLangs||[]) if(l && !langs.includes(l)){ homeTally[l]=(homeTally[l]||0)+1; homeTotal++; }
+  const top=homeLang ? homeTop(HOME_SWAP_WORDS,HOME_SWAP_SHARE) : homeTop(HOME_MIN_WORDS,HOME_MIN_SHARE);
+  if(top && top!==homeLang){ homeLang=top; localStorage.setItem('ct_home_lang',top); }
+}
+// Letters, not words: Soniox can write a language it does not know in a script
+// without spaces (v6 wrote 80 s of Maori as one run of Japanese kana), and that
+// is one "word" however long it is.
+function langLettersOf(p,cut){
+  const L=perWordOf(p,cut,'l',()=>false), W=p.slice(0,cut).match(/\S+/g)||[];
+  return W.map((w,i)=>[L[i],(w.match(/\p{L}/gu)||[]).length]);
+}
+function tongueGateFor(langLetters,conf){
+  if((caps.tongue_gate||'drop')==='off') return null;
+  let sup=null;
+  const room=roomLangs(); let tagged=0, out=0; const outLangs=[];
+  for(const [l,n] of langLetters||[]) if(l){ tagged+=n; if(room&&!room.has(l)){ out+=n; outLangs.push(l); } }
+  const floor=performance.now()-lastTongueAt<TONGUE_STICKY_MS ? 1 : TONGUE_MIN_LETTERS;
+  if(room && tagged>=floor && out/tagged>=TONGUE_MIN_SHARE){
+    sup={code:'tongue',note:'(not a language of this service)',
+         detail:Math.round(100*out/tagged)+'% '+majorityLang(outLangs)+(floor===1?' · after tongues':'')};
+    lastTongueAt=performance.now();
+  }
+  const cs=(conf||[]).filter(c=>c!=null);
+  if(!sup && cs.length>=UNCLEAR_MIN_WORDS){
+    const mean=cs.reduce((a,b)=>a+b,0)/cs.length;
+    if(mean<UNCLEAR_MAX_CONF) sup={code:'unclear',note:'(not clear enough to translate)',detail:'confidence '+mean.toFixed(2)};
+  }
+  if(sup && caps.tongue_gate==='watch'){
+    log('info','tongues gate would hold ['+sup.code+' '+sup.detail+'] (watch only)');
+    return null;
+  }
+  return sup;
 }
 // Render a held unit: the source row keeps its full "heard" record, and the
 // target cell says why nothing came. Nothing is cast -- the projector strip never learns this unit existed, which is the whole
@@ -3546,11 +3703,114 @@ function scheduleSonioxRetry(why){
   setTimeout(()=>{ if(listening) connectSonioxSocket(); }, delay);
 }
 
+// ---- prayer detector (experimental) ------------------------------------------
+// Communal prayer: the whole room praying aloud at once. Soniox latches onto the
+// loudest voice and writes plausible text (confidence 0.83-0.95, about what a
+// sermon dips to), and YAMNet calls it plain speech, so neither can gate it. The
+// SOUND gives it away, through two plain measurements of the raw audio:
+//   depth  how deeply the 300-3400 Hz loudness dips between syllables (std/mean
+//          of its envelope). One talker dips to near nothing between syllables;
+//          fifty fill each other's gaps.
+//   harm   how clean the pitch is (best normalised autocorrelation at 75-400 Hz,
+//          median over 40 ms frames). One voice is periodic; a crowd is not.
+// Unlike the DSP music detector this replaced (see YAMNet above), autocorrelation
+// failing on many sources is the point here: it is what is being detected.
+// Each feature over 2 s windows, averaged over the last 6 s; the score is
+// max(depth/0.6, harm/0.5), so under 1 means both are low. On a communal prayer
+// (mixer feed, 2026-11-04) it stayed under PG_ON; across five sermons it never
+// came near. Congregational singing scores low too, but the music detector has
+// that one. Calibrated on very little: hence the Experimental tag, and the score
+// in the diagnostics and the session record.
+// validation/results/2026-11-04-prayer-gate/.
+const PG_SR=16000, PG_WIN=2*PG_SR, PG_HOP=PG_SR, PG_FRAME=640, PG_ENV_DS=160;
+const PG_AVG_N=6;             // windows (one per second) in the score: ~6 s
+const PG_FAST_N=3;            // the release reads the last 3 only, so it is quick
+const PG_ON=0.95, PG_ON_MS=2000;    // score under this for this long: prayer
+const PG_OFF=1.15, PG_OFF_N=2;      // the 3-window score over this twice: a single voice again
+// The two mistakes don't cost the same: a few words of prayer on the wall are fine, a
+// speaker held back is not. So one window over PG_OFF blocks a hold, and one that is
+// only over PG_BACK but louder than the room has been (the speaker's mic coming on)
+// ends a hold at once.
+const PG_BACK=1.0;
+const PG_RISE_DB=6, PG_ROOM_N=12;   // that much over the median of the last 12 windows
+// Quieter windows are not judged (silence, hiss). The line follows this feed's own
+// level, the 90th percentile of the last 5 minutes: input gain differs from church to
+// church, and this reads the raw mic, before anything Soniox does to the level.
+const PG_FLOOR_DB=26, PG_TOP_N=300, PG_SILENT_RMS=0.0001;
+function pgBiquad(type,f0,q){   // RBJ cookbook, at PG_SR; state kept per instance
+  const w=2*Math.PI*f0/PG_SR, c=Math.cos(w), a=Math.sin(w)/(2*q), n=1+a;
+  const b0=type==='lp'?(1-c)/2:(1+c)/2, b1=type==='lp'?1-c:-(1+c);
+  const k={b0:b0/n,b1:b1/n,b2:b0/n,a1:-2*c/n,a2:(1-a)/n,x1:0,x2:0,y1:0,y2:0};
+  return x=>{ const y=k.b0*x+k.b1*k.x1+k.b2*k.x2-k.a1*k.y1-k.a2*k.y2;
+    k.x2=k.x1; k.x1=x; k.y2=k.y1; k.y1=y; return y; };
+}
+let pg=null;
+function pgReset(){
+  const band=[pgBiquad('hp',300,0.707),pgBiquad('hp',300,0.707),pgBiquad('lp',3400,0.707),pgBiquad('lp',3400,0.707)];
+  const envLp=[pgBiquad('lp',20,0.707),pgBiquad('lp',20,0.707)];
+  pg={band,envLp,raw:new Float32Array(PG_WIN),rw:0,filled:0,env:new Float32Array(PG_WIN/PG_ENV_DS),ew:0,
+      envN:0,acc:0,accN:0,since:0,hist:[],score:null,fast:null,feat:null,onSince:0,offN:0,levels:[],tops:[],clear:false,back:false};
+}
+pgReset();
+function pgFeed(frame,sampleRate){
+  const dec=Math.max(1,Math.round(sampleRate/PG_SR));
+  for(let i=0;i<frame.length;i++){
+    pg.acc+=frame[i]; if(++pg.accN<dec) continue;
+    const x=pg.acc/pg.accN; pg.acc=0; pg.accN=0;
+    pg.raw[pg.rw]=x; pg.rw=(pg.rw+1)%PG_WIN; if(pg.filled<PG_WIN) pg.filled++;
+    let y=x; for(const f of pg.band) y=f(y);
+    let e=Math.abs(y); for(const f of pg.envLp) e=f(e);
+    if(++pg.envN>=PG_ENV_DS){ pg.envN=0; pg.env[pg.ew]=e; pg.ew=(pg.ew+1)%pg.env.length; }
+    if(++pg.since>=PG_HOP && pg.filled>=PG_WIN){ pg.since=0; pgWindow(); }
+  }
+}
+function pgWindow(){
+  const N=PG_WIN, w=new Float32Array(N);
+  for(let i=0;i<N;i++) w[i]=pg.raw[(pg.rw+i)%N];
+  let ss=0; for(let i=0;i<N;i++) ss+=w[i]*w[i];
+  const rms=Math.sqrt(ss/N), db=20*Math.log10(rms+1e-6);
+  pg.tops.push(db); while(pg.tops.length>PG_TOP_N) pg.tops.shift();
+  const top=pg.tops.slice().sort((a,b)=>a-b)[Math.floor(pg.tops.length*0.9)];
+  let f=null;
+  if(rms>=PG_SILENT_RMS && db>=top-PG_FLOOR_DB){
+    const E=pg.env, M=E.length; let m=0; for(let i=0;i<M;i++) m+=E[i]; m/=M;
+    let v=0; for(let i=0;i<M;i++) v+=(E[i]-m)*(E[i]-m);
+    const depth=m>0?Math.sqrt(v/M)/m:0;
+    // Pitch at 8 kHz (pairs averaged): 400 Hz is far below its Nyquist, and it
+    // is a quarter of the work. Frames quieter than a quarter of the window's
+    // level are gaps, not voice: relative, so a quiet feed is judged like a hot one.
+    const F=PG_FRAME>>1, SR8=PG_SR>>1, lo=Math.floor(SR8/400), hi=Math.floor(SR8/75);
+    const hs=[], fr=new Float32Array(F);
+    for(let a=0;a+PG_FRAME<=N;a+=PG_FRAME){
+      let mu=0; for(let i=0;i<F;i++){ const v=(w[a+2*i]+w[a+2*i+1])/2; fr[i]=v; mu+=v; } mu/=F;
+      let e0=0; for(let i=0;i<F;i++){ const v=fr[i]-mu; fr[i]=v; e0+=v*v; }
+      if(e0<=0 || Math.sqrt(e0/F)<rms/4) continue;
+      let best=-1;
+      for(let L=lo;L<hi;L++){ let c=0; const n=F-L; for(let i=0;i<n;i++) c+=fr[i]*fr[i+L]; if(c>best) best=c; }
+      hs.push(best/e0);
+    }
+    if(hs.length>=5){ hs.sort((a,b)=>a-b); f={depth,harm:hs[hs.length>>1]}; }
+  }
+  pg.hist.push(f); while(pg.hist.length>PG_AVG_N) pg.hist.shift();
+  const sc=list=>{ const g=list.filter(Boolean); if(g.length<Math.ceil(list.length/2)) return null;
+    let d=0,h=0; for(const x of g){ d+=x.depth; h+=x.harm; } d/=g.length; h/=g.length;
+    return Math.max(d/0.6,h/0.5); };
+  pg.score=pg.hist.length>=PG_AVG_N?sc(pg.hist):null;
+  pg.fast=sc(pg.hist.slice(-PG_FAST_N));
+  pg.feat=f;
+  const one=f?Math.max(f.depth/0.6,f.harm/0.5):0;
+  const lv=pg.levels.slice().sort((a,b)=>a-b);
+  pg.clear=one>PG_OFF;
+  pg.back=one>PG_BACK && lv.length>=PG_ROOM_N/2 && db>=lv[lv.length>>1]+PG_RISE_DB;
+  pg.levels.push(db); while(pg.levels.length>PG_ROOM_N) pg.levels.shift();
+  if(typeof pgDecide==='function') pgDecide(performance.now());
+}
+// ---- end of prayer detector ----
 // ---- music detector (YAMNet) -----------------------------------------------
-// Singing only. Prayer is deliberately NOT here: it is ordinary speech, and any
-// acoustic classifier for it would really be detecting "quieter and flatter",
-// which is also how people read Scripture and give announcements. That one needs
-// the transcript, not the waveform.
+// Singing only. Prayer is not here: one person praying is ordinary speech, and a
+// classifier for it would really be detecting "quieter and flatter", which is
+// also how people read Scripture. COMMUNAL prayer is different (many voices at
+// once) and has its own detector, the prayer detector above.
 //
 // This replaced a hand-rolled DSP version (autocorrelation F0 + held-note
 // detection) that strobed on real worship music. The reason is worth keeping:
@@ -3682,6 +3942,7 @@ async function mdRun(){
   }finally{ yamBusy=false; }
 }
 function mdDecide(now){
+  renderHearChip();
   if(mdRaw.length<3) return mdRenderDiag();    // no verdict off one or two windows
   if(mdScore>=MD_ON){ mdOffSince=0; if(!mdOnSince) mdOnSince=now; }
   if(mdScore<=MD_OFF){ mdOnSince=0; if(!mdOffSince) mdOffSince=now; }
@@ -3695,6 +3956,34 @@ function mdDecide(now){
     if(fast) setServiceMode('speaking','music ended — '+MD_OFF_FAST_N+' speech windows',true);
     else if(mdOffSince && now-mdOffSince>=MD_OFF_MS) setServiceMode('speaking','music ended '+pct,true);
   }
+}
+// The prayer detector's verdicts (it runs whether or not Gate prayer is on, so
+// the diagnostics show what it WOULD do). It acts only from Speaking: music is
+// the music detector's, and an operator's mute is an instruction. Music also wins
+// when both hear something: a song scores as prayer too, and YAMNet is the
+// detector with the track record, so the prayer gate never closes while it hears
+// music (and the music detector takes over a prayer hold, see mdDecide). The release
+// comes before the anti-strobe guard: a speaker never waits. The guard still spaces
+// out the holds, so a mistaken release can't strobe.
+function pgDecide(now){
+  renderHearChip();
+  if(pg.score!=null && pg.score<PG_ON && !pg.clear){ if(!pg.onSince) pg.onSince=now; } else pg.onSince=0;
+  pg.offN=(pg.fast!=null && pg.fast>PG_OFF) ? pg.offN+1 : 0;
+  pgRenderDiag();
+  if(serviceMode==='prayer' && modeByDetector==='prayer' && (pg.back || pg.offN>=PG_OFF_N)){
+    setServiceMode('speaking',(pg.back?'speaker back':'prayer ended')+', score '+(pg.fast??0).toFixed(2),'prayer');
+    return;
+  }
+  if(now-lastModeAt<MD_GUARD_MS) return;
+  if(serviceMode==='speaking' && pg.onSince && now-pg.onSince>=PG_ON_MS && !musicHeard())
+    setServiceMode('prayer','communal prayer, score '+pg.score.toFixed(2),'prayer');
+}
+function pgRenderDiag(){
+  if(!diagOpen) return;
+  const f=x=>x==null?' —  ':x.toFixed(2);
+  diagPrayer.textContent='prayer detector  score '+f(pg.score)+' ('+PG_AVG_N+' s)  '+f(pg.fast)+' (3 s)   hold<'+PG_ON.toFixed(2)
+    +' '+(PG_ON_MS/1000)+'s · release>'+PG_OFF.toFixed(2)+'   '+(autoPrayer?'AUTO':'gate off — observing only')+'\n'
+    +'  depth '+f(pg.feat&&pg.feat.depth)+'  pitch '+f(pg.feat&&pg.feat.harm)+'   (one voice ~1.1 / 0.7; a praying room ~0.3 / 0.4)';
 }
 function mdRenderDiag(){
   if(!diagOpen) return;
@@ -3721,6 +4010,7 @@ function onPcmFrame(e){
   // the SEND is conditional.
   const f=e.data, g=gainLin();
   mdFeed(f, sonioxCtx ? sonioxCtx.sampleRate : 48000);
+  pgFeed(f, sonioxCtx ? sonioxCtx.sampleRate : 48000);
   const open = !!sonioxWS && sonioxWS.readyState===1;
   // Held: still converted, into the pre-roll the reopened socket gets first.
   const keep = !open && prerollArmed;
@@ -4736,7 +5026,7 @@ function flushSonioxThought(reason){
   const spoken=spokenOf(pend,cut);    // read before the cursor moves: the tokens are pruned with it
   const conf=confOf(pend,cut);
   const span=spanOf(pend,cut);
-  const unitLangs=langsOf(pend,cut);
+  const unitLangs=langsOf(pend,cut), unitLetters=langLettersOf(pend,cut);
   const wetChars=Math.max(0,cut-fin.length);
   let owed='';
   if(wetChars>0){ owed=pend.slice(fin.length,cut); wetWords.splice(0,(fin.match(/\S+/g)||[]).length); }
@@ -4785,10 +5075,11 @@ function flushSonioxThought(reason){
   // The gate sits between the sealed source row and the translator: everything
   // above this line has already happened, so a held unit is still a complete
   // transcript entry -- only the call, the voice and the projector are skipped.
-  const sup=suppressionFor(text,unitLangs);
+  const sup=suppressionFor(text,unitLangs,conf,unitLetters);
   if(sup){ holdUnit(rowSeq,sup,text); }
   else if(sxCaption()){ }                                 // Soniox's own translation is the caption (see nv*)
   else queueUnit(text,rowSeq,spoken,conf,span);          // to the coalescing translate worker
+  if(translatingNow()) noteHome(unitLangs);
   const left=(sxPending()+(wetOn()?sxTailRaw:'')).trim();
   if(!left) sonioxLangs=[];
   // A soft cut can leave an unfinished tail behind, and that tail is already the
@@ -4990,8 +5281,12 @@ function nvCommit(k){       // commit pairs 0..k: their translation as one capti
   const text=defill(nvFinal.slice(0,cut).trim());
   const srcCut=Math.max(0,Math.min(p.srcEnd,sxFinal.length)-sxSent);
   const spoken=spokenOf(sxPending(), srcCut), span=spanOf(sxPending(), srcCut);
+  const srcLangs=langsOf(sxPending(), srcCut), srcLetters=langLettersOf(sxPending(), srcCut), srcConf=confOf(sxPending(), srcCut);
   nvFinal=nvFinal.slice(cut); nvBase+=cut;            // loses text off the front: offsets stay absolute
   const el=nvSealSource(p.srcEnd);
+  const tg=tongueGateFor(srcLetters,srcConf);         // the same gate as the translator path's
+  noteHome(srcLangs);
+  if(tg){ if(nvSealedSeq) holdUnit(nvSealedSeq,tg,nvSealed); return; }
   if(!text) return;
   const cell=el||addTgtRow();
   if(routerOn()){ routerCommit(nvSealed,text,cell,spoken,span,nvLang||(langs&&langs[0])||'en',nvSealedSeq); return; }

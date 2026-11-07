@@ -173,6 +173,11 @@ HAS_GEMINI_KEY = bool(os.environ.get("GEMINI_API_KEY"))
 # stream and /translate ignore any that a stale page still sends. "Translator
 # hears the caption" (Gemini taking the caption's own audio) is unaffected.
 EARS_ENABLED = os.environ.get("CT_EARS", "1").strip().lower() not in ("0", "false", "no", "off")
+# The tongues gate (index.html, tongueGateFor): a unit Soniox tags as a language
+# nobody in the room speaks is held off the wall. drop (default) | watch (log only) | off.
+TONGUE_GATE = (os.environ.get("CT_TONGUE_GATE", "drop").strip().lower() or "drop")
+if TONGUE_GATE not in ("drop", "watch", "off"):
+    TONGUE_GATE = "drop"
 import ears as extra_ears
 import router_gate
 import languages
@@ -248,6 +253,12 @@ PROJECT_CAPABLE = bool(CT_PROPRESENTER_URL and CT_PROPRESENTER_MESSAGE)
 # on -- Mic on while listening -- and cleared when it turns off: Muted (by the
 # operator or Gate music) or Stop. Off by default: the Message carries the text.
 CT_PROPRESENTER_FOLLOW_MIC = (os.environ.get("CT_PROPRESENTER_FOLLOW_MIC") or "").strip().lower() in ("1", "true", "yes", "on")
+# ...only while one of these audience Looks is live (CT_PROPRESENTER_LOOK, names or
+# uuids, comma-separated; matched without regard to case). Empty = any Look. With a
+# Look set, the box comes on only when the translation is on AND that Look is live,
+# and goes off when the operator switches to another Look; the page asks
+# /project/look every few seconds while listening.
+CT_PROPRESENTER_LOOK = [w.strip() for w in (os.environ.get("CT_PROPRESENTER_LOOK") or "").split(",") if w.strip()]
 
 
 def _pp_int_env(name, default, lo, hi):
@@ -452,6 +463,37 @@ def _pp_show():
     except Exception as exc:
         print(f"[project] ERROR: {exc}", flush=True)
         return False, str(exc)[:120]
+
+
+def _pp_current_look():
+    """The live audience Look: (name, uuid, error-or-None). GET /v1/look/current
+    (ProPresenter 7.9+). The published example nests name/uuid under "id" while the
+    schema puts them at the top level, so both are read."""
+    try:
+        r = _get_http_session().get(
+            f"{CT_PROPRESENTER_URL}/v1/look/current",
+            headers={"Accept": "application/json"}, timeout=3)
+        if r.status_code != 200:
+            return "", "", f"ProPresenter HTTP {r.status_code}"
+        d = r.json()
+        if not isinstance(d, dict):
+            return "", "", "ProPresenter: unexpected look reply"
+        ident = d.get("id") if isinstance(d.get("id"), dict) else d
+        return str(ident.get("name") or ""), str(ident.get("uuid") or ""), None
+    except Exception as exc:
+        return "", "", str(exc)[:120]
+
+
+def _pp_look_state():
+    """(active, look name, error-or-None) for the CT_PROPRESENTER_LOOK gate. With no
+    Look configured the gate is always open. On an error `active` is None: unknown."""
+    if not CT_PROPRESENTER_LOOK:
+        return True, "", None
+    name, uuid, err = _pp_current_look()
+    if err:
+        return None, "", err
+    wanted = {w.casefold() for w in CT_PROPRESENTER_LOOK}
+    return (name.strip().casefold() in wanted or uuid.casefold() in wanted), name, None
 
 
 def _pp_clear():
@@ -2979,7 +3021,8 @@ def project_ep():
     window, so any failure returns a JSON error the browser just logs.
 
     Body: {text} to show/update the line, {action:"clear"} to hide it, or
-    {action:"show"} to show it unchanged (CT_PROPRESENTER_FOLLOW_MIC).
+    {action:"show"} to show it unchanged (CT_PROPRESENTER_FOLLOW_MIC) -- held,
+    {ok, held:"look"}, while CT_PROPRESENTER_LOOK names a Look that isn't live.
 
     Matches the current official ProPresenter API (verified against the published
     OpenAPI): POST /v1/message/{id}/trigger with an array of token values -- a text
@@ -3000,6 +3043,11 @@ def project_ep():
         ok, err = _pp_clear()
         return jsonify(ok=True) if ok else (jsonify(error=err), 502)
     if action == "show":   # follow-the-Mic: show the Message as it is (CT_PROPRESENTER_FOLLOW_MIC)
+        active, look, err = _pp_look_state()   # ...only on the chosen Look (CT_PROPRESENTER_LOOK)
+        if err:
+            return jsonify(error=err), 502
+        if not active:
+            return jsonify(ok=True, held="look", look=look)
         ok, err = _pp_show()
         return jsonify(ok=True) if ok else (jsonify(error=err), 502)
     text = (data.get("text") or "")[:1000]
@@ -3011,6 +3059,20 @@ def project_ep():
         return jsonify(ok=True)
     ok, err = _pp_send_text(text)
     return jsonify(ok=True) if ok else (jsonify(error=err), 502)
+
+
+@app.route("/project/look")
+def project_look_ep():
+    """Is the Look that may carry the translation box live? (CT_PROPRESENTER_LOOK)
+    The page asks every few seconds while listening and shows or clears the Message
+    when the answer changes. {active, look}: `look` is the live Look's name. With no
+    Look configured, always active."""
+    if not PROJECT_CAPABLE:
+        return jsonify(error="ProPresenter not configured"), 503
+    active, look, err = _pp_look_state()
+    if err:
+        return jsonify(error=err), 502
+    return jsonify(active=active, look=look)
 
 
 # ---- the session recording -------------------------------------------------
@@ -3943,6 +4005,7 @@ def caps_ep():
         soniox_model=SONIOX_RT_MODEL,                  # the Recognizer menu's default
         soniox_models=SONIOX_RT_CHOICES,               # ... and its choices
         ear_wait_ms=EAR_WAIT_MS,
+        tongue_gate=TONGUE_GATE,                       # drop | watch | off (CT_TONGUE_GATE)
         tts_providers=[{"id": p, "name": n} for p, n in TTS_PROVIDERS],
         tts_provider=DEFAULT_TTS_PROVIDER,
         # Container the audio_chunk / Replay bytes arrive in, so the browser
@@ -3974,6 +4037,7 @@ def caps_ep():
         publish=PUBLISH_CAPABLE,     # external caption relay (/publish) configured
         propresenter=PROJECT_CAPABLE, # ProPresenter message projection (/project) configured
         propresenter_follow_mic=PROJECT_CAPABLE and CT_PROPRESENTER_FOLLOW_MIC, # the Message is shown/cleared with the Mic, no text
+        propresenter_look=PROJECT_CAPABLE and CT_PROPRESENTER_FOLLOW_MIC and bool(CT_PROPRESENTER_LOOK), # ...only on that Look (/project/look)
         propresenter_quiet_s=CT_PROPRESENTER_QUIET_S, # ...and cleared after this many seconds of silence (0 = never)
         projector_w=CT_PROJECTOR_W,  # networked #projector fixed size (px, 0 = fill the window)
         projector_h=CT_PROJECTOR_H,

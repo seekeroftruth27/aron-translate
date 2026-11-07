@@ -530,7 +530,21 @@ listening) and clears it when it turns off (**Muted**, by you or by Gate music, 
 **Stop**), so the box is up while someone speaks and gone for songs. After
 `CT_PROPRESENTER_QUIET_S` seconds (default 10) without speech while the Mic is on it
 clears too, and the next speech brings it back; set it to `0` to keep the box up
-through any silence. Once per change, never per caption. It works with the **ProPresenter** switch in Settings
+through any silence. Once per change, never per caption.
+
+To tie the box to a ProPresenter **Look** as well, name it:
+
+```
+CT_PROPRESENTER_LOOK=Translation
+```
+
+The box then comes on only when the translation is on **and** that Look is live,
+and goes off when the ProPresenter operator switches to another Look (switching
+back brings it back within about two seconds). Use the Look's name as shown in
+ProPresenter's Looks, or its uuid; list several with commas. Case doesn't matter.
+A Look you've changed on the fly without saving may come up under another name,
+so save the Look you use. It needs ProPresenter 7.9 or later (`/v1/look/current`);
+on an older one the box stays off and the log says why. It works with the **ProPresenter** switch in Settings
 left off: that switch only sends caption text, which this mode never does. The Message is triggered with no token values, so give it no text token.
 
 Finalized captions only go to the screen — the same policy as the website. It's

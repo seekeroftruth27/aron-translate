@@ -1,0 +1,4 @@
+# Only for running the tests (python -m unittest discover -s tests -v); the app
+# itself needs just requirements.txt.
+-r requirements.txt
+mini-racer>=0.12      # runs the operator page's JavaScript in the page tests
