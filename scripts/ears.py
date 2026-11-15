@@ -360,11 +360,13 @@ class Ear:
 
 
 class ElevenLabsEar(Ear):
-    """ElevenLabs Scribe v2 Realtime. As a reading beside the hearing translator:
-    44, 42, 43 of 47 real mis-hears (the audio alone 39-41). Interims can flip a
-    right word to a wrong one before committing."""
+    """ElevenLabs Scribe v3 Live. Its v2 Realtime predecessor, as a reading beside
+    the hearing translator: 44, 42, 43 of 47 real mis-hears (the audio alone 39-41).
+    Interims can flip a right word to a wrong one before committing. On three
+    sermon minutes v3 put a word in a partial 0.17-0.30 s after it was said (p50;
+    v2 0.54-0.63 s)."""
     name, label, key_env, rate = "elevenlabs", "ElevenLabs", "ELEVENLABS_API_KEY", 16000
-    MODEL = "scribe_v2_realtime"
+    MODEL = "scribe_v3_live"
 
     def url(self):
         return (f"wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id={self.MODEL}"

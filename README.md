@@ -592,6 +592,155 @@ ProPresenter actually wraps on your screen. These knobs apply only in `word` mod
 > `ProPresenter ON -> …` at startup when configured; if projection doesn't show,
 > the app console logs `[project]` with the HTTP status.
 
+## The Attendant — which verse is in focus (experimental, optional)
+
+Named for the synagogue attendant of Luke 4:17-20, who hands Jesus the scroll of
+Isaiah and takes it back when he has read. The Attendant names the Bible verse
+in focus: cited, alluded to, or being read. It only detects. What to do next
+(arm a ProPresenter Bible slide, show the verse, log it) is left to whoever
+listens, so another church can wire it to its own setup.
+
+It keeps **no Bible text and no per-language rules**. Models name the verse, in
+any language they read. The only local data is how many verses each chapter
+has; that is what rejects "John 22:5" and turns "the last 3 verses" into
+verses 18-20.
+
+**Turn it on in Settings › Wall › Attendant.** If the switch isn't there, the
+checkout doesn't have the feature. The line under the switch says which models
+are in use, or why it isn't running (it needs an Anthropic or OpenAI key).
+`CT_VERSE=1` starts it on.
+
+**Keeping up with the speaker.** Soniox confirms a word about 4.7 s after it
+is spoken, but drafts it within half a second. So the Attendant reads the
+draft words and works in small packets:
+
+- **Packet size:** at rest, one a clause, the Router's cadence (the draft
+  words end in punctuation, at least 6 of them; at once on a number; at most
+  20 words or 6 s; `CT_VERSE_IDLE=words` for every 6 words). Every 3 words on
+  alert or while a passage is in view, and at once at a pause.
+- **Calls:** each packet's model calls run in parallel.
+- **The page:** asks for news four times a second.
+
+**What each packet goes through:**
+
+1. **Gate.** With an OpenAI key, Luna's Decisions API answers two questions in
+   one call of about 0.13 s (`CT_VERSE_GATE`):
+   - is Scripture coming (none, about to quote, a citation, a reading, a
+     request)?
+   - is there enough here to latch onto a verse?
+
+   Anything but "none" puts the Attendant on **alert**.
+2. **Reader.** This writes an answer, so it takes about 1 s. It is asked only to
+   name a new passage: when the gate hears a citation or a request, or on alert
+   once there is enough to go on. A number in the words starts it alongside the
+   gate (`CT_VERSE_READ_EARLY=alert` also on every alert packet, as up to 2.21:
+   Sol was the costliest line on a live sermon). The reader is `gpt-6-sol`, or
+   `claude-haiku-5-5` with only an Anthropic key (`CT_VERSE_MODEL`). It says:
+   - which references he names, including split ones ("capitolul 15, versetul
+     21," … "Marcu"), "24, la 27" and "the last 3 verses";
+   - which verse he is reading aloud, if any, and how sure it is;
+   - whether he asked for it on the screen.
+
+   A reference counts only if its numbers are in the words and the verse exists.
+
+   **When he names the wrong book or chapter** ("in Galatians" for words from
+   Ephesians), the Attendant follows the words, not the citation. If a different
+   passage is read with confidence 0.7 or more within 45 s of the citation, it
+   goes active and is marked `corrected_from`. The reader tends to abstain when
+   the words contradict the citation, so for the first few packets after a
+   citation a **blind check** asks `claude-opus-5-5` (`CT_VERSE_BLIND_MODEL`;
+   the reader's model without an Anthropic key) with only the spoken words.
+3. **Tracker.** Once a passage is known, its text is fetched: one chapter from
+   getBible (`CT_VERSE_BIBLE`, e.g. `cornilescu`; no key), else `gpt-6-luna`
+   recites the next few verses from memory (~3 s). With the text in hand, the
+   gate's Luna call on each packet also asks, at no extra time (~0.17 s):
+   - which verse the newest words are from, with the verses' text as the
+     choices;
+   - is he still reading, word for word, or talking about it in his own words?
+
+   Until the text is here, `gpt-6-sol` answers which verse from memory (about
+   1 s; `CT_VERSE_TRACK_MODEL`). `CT_VERSE_TEXT=off` keeps Sol tracking
+   throughout. Luna without the text didn't know where Romanian verses end:
+
+   | tracker | verse changes caught on the packet | early moves |
+   |---|---|---|
+   | Luna's Decisions API, from memory | 12-23 of 33 | 26-101 |
+   | Sol, from memory | 26 of 33 | 0 |
+   | Luna's Decisions API, with the text | 26-28 of 33 | 0 |
+
+   Without an OpenAI key the reader's model tracks, less well.
+4. **Scratchpad (hidden).** What has been named or read this service, in
+   `recordings/verse_memory.json`. A bare "versetul 4" resolves against it.
+
+**What a listener follows** is one stream of `state` events:
+
+| State | Meaning | Listener does |
+|---|---|---|
+| idle | nothing in view | take it down |
+| alert | he sounds about to quote or cite Scripture; no passage yet | get ready |
+| armed | a passage is in view: cited, a chapter named, "the last 3 verses", one chunk that sounds like a verse, or a passage he reads or quotes without bringing it into focus (the reference still follows him) | load it, don't show it |
+| active | he deliberately brought it into focus and is reading it: named the verse ("versetul 35", "Ioan 8:47:") or announced it ("să citim", "I will read"), or he asked for it on the screen. The reference follows him verse by verse; `paused` through an aside | show it |
+
+Whether he brought a text into focus is a question Luna answers in the call it
+already makes on each packet, so it works in any language; a cue keeps a
+reading eligible to go active for 30 s. A verse quoted from memory ("Biblia
+spune: …", "the Lord said: …") stays armed. `CT_VERSE_FOCUS=off` makes any
+cited reading active, as before.
+
+How an active passage changes:
+- **Pause:** when he stops reading (an aside, or he is done), it pauses.
+- **End:** it goes idle 10 s after the last words he read, so the screen
+  clears. The clock does not restart when his commentary repeats a verse's
+  words, only when he reads on to a later verse.
+- **At once:** it goes idle when he invites the congregation to sit down ("vă
+  invit să vă reașezați", "you may be seated"; the end of a formal reading,
+  `CT_VERSE_SEATED`), or when he announces another passage.
+- **Resume:** for 60 s after it ends, going on with the same passage brings it
+  straight back to active, with no need to name it again.
+- **Jumps:** a verse he names in the chapter he is reading ("Versetul 35.")
+  becomes one of the tracker's choices, so the next words can land on it.
+
+**Requests.** "If I could get this verse projected", "dacă se poate afișa
+Geneza 26 cu 2": the passage goes active at once. It is the reference said in
+the request, or else the newest verse in the scratchpad.
+`CT_VERSE_REQUEST_WORDS` lists the church's own phrases. These are matched on
+Soniox's words before the segment is final; the reader corrects the reference
+about a second later.
+
+**The pill.** On the operator page, next to Ready, the pill follows the state:
+- just the book glyph, pulsing: alert;
+- amber, dashed: armed;
+- green: active;
+- pulsing green: requested.
+
+Clicking it copies the reference.
+
+```
+GET  /verse-feed?since=<seq>     events, state, scratchpad, call counts
+POST /verse {"action":"enable","on":true} | {"action":"clear"} | {"text":"..."}
+CT_VERSE_WEBHOOK=http://...      each event POSTed here
+
+{"type":"state","state":"idle|alert|armed|active","was":"armed","ref":"1 Timothy 1:18",
+ "why":"citation|allusion|reading|request|finished|quiet","paused":false,"imminent":false}
+{"type":"citation","level":"strong|weak","how":"full|verse|chapter","ref":"John 1:1",
+ "book":42,"chapter":1,"verse":1,"verse_end":null,"reading_now":true,"spoken":"..."}
+{"type":"reading","level":"weak|strong","state":"allusion|start|verse|pause|resume|end","ref":"John 1:1"}
+{"type":"request","level":"strong","via":"words|llm","ref":"Genesis 26:2","spoken":"..."}
+```
+
+**How far behind him.** Measured by replaying three sermons' live Soniox
+captures against an answer key (`validation/results/2026-11-10-attendant-speed/`):
+
+| | before (#121) | now |
+|---|---|---|
+| first verse of a cited reading | ~11 s | **2.8 s** (15 of 16 shown) |
+| next verse as he reads on | 12 of 32 caught, 15 s | **25 of 32, 2.3 s** |
+| noticing he has stopped | 3.2 s | **2.1 s** |
+
+Replayed in real time through the server itself, Acts 27:20-25, 35-38 and 44
+each showed 1.6-3.0 s after he began the verse, apart from 27:44 at 4.2 s.
+Earlier measurements: `validation/results/2026-11-09-verse-detector/`.
+
 ## Config (editable, no code)
 
 - `config/translation_prompt.txt` — the translator's system prompt. Reasons

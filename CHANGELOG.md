@@ -1,5 +1,103 @@
 # Changelog
 
+## [v2.21.1] — 2026-11-15
+
+### Fixed
+- **Unmuting while a Gate is on no longer mutes again by itself.** A click on
+  the Mic (or key 1/2) used to overrule Gate music or Gate prayer for the 5 s
+  anti-strobe guard only: unmute for a pastor talking over the keyboard pad and
+  five seconds later the gate muted again, and again, until the music stopped.
+  The click now **pins** the Mic (solid underline instead of dotted): no
+  detector moves it until every Gate that is on hears the same thing in the
+  audio since the click, and then it hands back by itself. Unmuted in a song:
+  the Gates take over again once they hear speech, so the next song still
+  mutes. Muted before a song: Gate music takes the mute over once it hears the
+  music, and ends it with the song. A mute for anything else now stays until
+  you unmute (Gate music used to lift any mute after 5 s of speech). Pins and
+  their release are in the session record.
+
+### Changed
+- **The music gate shuts about 2.5 s sooner at the start of a song and no longer
+  lets go in the middle of one.** The release rule (two quiet windows end the
+  hold) was too quick: on the 2026-11-10 service it turned five songs into 20
+  mutes, and on 2026-11-03 seven into 17, each release letting the music
+  through for the 5 s anti-strobe guard. It now takes four windows (about a
+  second longer to open for speech after a song). A song also closes the gate
+  at once when four windows in a row are at least 80 % music (about 2 s in,
+  was about 4.5 s). Replayed on both services: music let through 60 → 23 s and
+  46 → 29 s, mutes 20 → 5 and 17 → 8, speech muted 16 → 19 s and 7 → 12 s. The
+  audio kept for the speaker's first words after a song is 3 s (was 2). The
+  bench script `validation/scripts/music_detect_stress.py` had no fast
+  release, so it now mirrors the page, and `--from-csv ... --sweep` compares
+  settings without scoring the audio again.
+
+## [v2.21.0] — 2026-11-10
+
+### Changed
+- **The ElevenLabs ear hears with Scribe v3 Live** (was Scribe v2 Realtime),
+  released 2026-11-10 at the same price. On three sermon minutes it had a word in
+  its reading 0.17-0.30 s after it was said (median; v2 0.54-0.63 s), so it is
+  more often caught up when a sent-on mis-hearing waits for the ears.
+- **The Attendant costs less to run.** At rest it calls Luna once a clause (the
+  Router's cadence) instead of every 6 words: 35-42% fewer calls at rest on three
+  sermons (`CT_VERSE_IDLE`). Sol is asked to name a passage only when Luna hears
+  one being named, or straight away on a number (`CT_VERSE_READ_EARLY`). Around the
+  readings of a replayed sermon that is ~$1.18 → ~$0.72 an hour. The cost box now
+  prices Opus.
+- **The Attendant names passages with Sol, and checks blind with Opus.** With an
+  OpenAI key, Sol now names cited and quoted passages (Haiku with only an
+  Anthropic key; `CT_VERSE_MODEL`). Opus does the rare blind check after a
+  citation (`CT_VERSE_BLIND_MODEL`). On three replayed sermons, 26 of 62
+  readings were picked up instead of 20.
+- **The Attendant clears the screen within about 10 s of the speaker's last
+  words read**, at once when he asks the congregation to sit down (the end of a
+  formal reading), and brings the passage straight back if he goes on with it
+  within a minute. A verse he names mid-reading ("Versetul 35.") now shows about
+  2.5 s after he starts it, down from about 5-8 s.
+- **The Attendant goes green only when the speaker brings the text into focus**:
+  he names the verse and reads it ("Versetul 35. După
+  ce…"), announces it ("să citim", "I will read"), or asks for it on the screen.
+  A passage named in passing or quoted from memory stays amber, still followed
+  verse by verse. Luna answers this in the call it already makes on each packet,
+  in any language (`CT_VERSE_FOCUS`). On three replayed sermons, the time a
+  verse showed with nothing being read fell from 122 s to about 50 s.
+- **The Attendant follows a reading with the verses' text.** Once a passage is
+  cited, its chapter comes from getBible (`CT_VERSE_BIBLE=cornilescu`, no key),
+  or Luna recites the verses. The one Luna call on each packet then also says
+  which verse he is at and whether he is still reading. The next verse shows a
+  median 1.7 s after he begins it (p90 2.4 s), and Sol is hardly called.
+  `CT_VERSE_TEXT=off` goes back to Sol tracking from memory.
+- **The Attendant keeps up with the speaker.** On three replayed sermons the next
+  verse now shows a median 2.3 s after he begins it, against 15 s before. The
+  first verse of a cited reading shows in 2.8 s, against about 11 s.
+  - **Draft words:** it reads Soniox's draft words in small packets (Soniox
+    confirms a word ~4.7 s after it is spoken), with its model calls in parallel.
+  - **Gate:** Luna's Decisions API (~0.13 s) puts it on **alert** when Scripture
+    is coming. The pill then shows just the book glyph.
+  - **Tracker:** Sol follows the reading verse by verse (`CT_VERSE_TRACK_MODEL`).
+  - **The page** asks for news four times a second.
+
+  `validation/results/2026-11-10-attendant-speed/`.
+
+### Added
+- **The Attendant: which Bible verse is in focus (experimental; Settings ›
+  Wall › Attendant).** Models name the verse cited, alluded to or being read, in
+  any language. No Bible text is kept; the only local data is how many verses
+  each chapter has. It only reports: `GET /verse-feed`, an optional
+  `CT_VERSE_WEBHOOK`, and a pill next to Ready on the operator page.
+  - **Models:** a Luna gate on each chunk, then a reader that names the passage
+    (now Sol; see Changed).
+  - **States:** idle / armed / active `state` events tell a listener when to
+    load a passage and when to show it. An aside pauses the active passage.
+  - **References:** "ultimele 3 versete", and a chapter and verse whose book
+    comes in the next chunk.
+  - **Requests:** "dacă se poate afișa Geneza 26 cu 2" makes the passage active
+    at once.
+  - **Wrong citations:** a confident reading of another passage just after a
+    citation wins ("in Galatians" for Ephesians), marked `corrected_from`.
+
+  `validation/results/2026-11-09-verse-detector/`.
+
 ## [v2.20.0] — 2026-11-07
 
 ### Added

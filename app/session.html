@@ -158,6 +158,9 @@ function evText(e){
   if(e.kind==='set') return '<b>'+esc(e.key)+'</b>: '+esc(val(e.from))+' → '+esc(val(e.to));
   if(e.kind==='listen') return e.on?'<b>Listening started</b>':'<b>Listening stopped</b>';
   if(e.kind==='mode') return '<b>Service mode</b> → '+esc(e.mode)+' ('+esc(e.by)+(e.why?', '+esc(e.why):'')+')';
+  if(e.kind==='pin') return e.released
+    ? '<b>Mic pin released</b> ('+esc(e.released)+'): the Gates are in charge again'
+    : '<b>Mic pinned</b> → '+esc(e.mode)+' by the operator, until the Gates agree';
   if(e.kind==='clear') return '<b>Captions cleared</b> on screen (the record keeps the rows)';
   return esc(e.kind);
 }

@@ -75,6 +75,24 @@
   .pill .lq.warn { color:var(--warn); font-weight:600; }
   .pill .lq:empty { display:none; }
   #costBox { font-variant-numeric:tabular-nums; }
+  /* Scripture pill (/verse-feed): the passage the speaker seems to cite or read.
+     Weak (amber, dashed): mentioned or alluded to -- there if a human wants it.
+     Strong (green, solid): he is reading it or about to. Click copies the reference. */
+  .verse { display:inline-flex; align-items:center; gap:7px; height:34px; padding:0 13px; border-radius:999px;
+           font:inherit; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap;
+           border:1px dashed var(--warn); background:var(--warn-soft); color:var(--warn); }
+  .verse.strong { border-style:solid; border-color:var(--ok); background:var(--ok-soft); color:var(--ok); }
+  .verse.stale { opacity:.55; }
+  /* alert: he sounds about to quote or cite Scripture, no passage yet -- just the glyph */
+  .verse.alert { border-style:dashed; border-color:var(--text-2); background:transparent; color:var(--text-2);
+                 padding:0 10px; animation:valert 1.6s ease-in-out infinite; }
+  .verse.alert .vref, .verse.alert .vwhy { display:none; }
+  @keyframes valert { 50% { opacity:.45; } }
+  .verse.req { border-style:solid; border-color:var(--ok); background:var(--ok); color:var(--bg-panel);
+               animation:vreq 1.2s ease-in-out 3; }
+  @keyframes vreq { 50% { box-shadow:0 0 0 6px var(--ok-soft); } }
+  .verse .i { width:16px; height:16px; }
+  .verse .vwhy { font-weight:500; font-size:11px; letter-spacing:.06em; text-transform:uppercase; opacity:.85; }
   .utils { display:flex; gap:6px; }
   .vsep { width:1px; height:28px; background:var(--border); flex:none; }
   /* idle (grey) / live (green) / held (amber: muted, or a stage worth a look) /
@@ -125,6 +143,8 @@
   /* Dotted underline = moved on its own and may move again (Gate music drives
      it), the same mark the language button uses for Auto. */
   #modeInd.auto .mt { text-decoration:underline dotted; text-underline-offset:4px; }
+  /* Solid = pinned by the operator: no detector moves it until it agrees. */
+  #modeInd.auto.pinned .mt { text-decoration-style:solid; }
   #speakBtn .g-on, #speakBtn[aria-pressed="true"] .g-off { display:none; }
   #speakBtn[aria-pressed="true"] .g-on { display:block; }
   #speakBtn[aria-pressed="false"] { color:var(--text-2); }
@@ -416,6 +436,7 @@
       <h1 id="title"><span class="ac">Á</span>ron</h1>
       <span class="onair hide" id="onAir"><span class="dot live"></span>Live <span id="liveClock">00:00:00</span></span>
       <span class="ready" id="readyTag">Ready</span>
+      <button class="verse hide" id="versePill" type="button" aria-live="polite" aria-label="Attendant: Scripture spotted"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.5c-1.8-1.4-4.6-2-7.5-1.8v13c2.9-.2 5.7.4 7.5 1.8 1.8-1.4 4.6-2 7.5-1.8v-13c-2.9-.2-5.7.4-7.5 1.8zM12 6.5v13"/></svg><span class="vref" id="verseRef"></span><span class="vwhy" id="verseWhy"></span></button>
     </div>
     <div class="lights" role="list" aria-label="What is running">
       <span class="pill" id="lpMic" role="listitem" data-base="Microphone"><span class="dot" id="micDot"></span>Mic</span>
@@ -531,7 +552,7 @@
       <div class="seg three" id="paceSeg" role="group" aria-label="Pace">
         <button type="button" data-v="1">Pronto</button><button type="button" data-v="2">Moderato</button><button type="button" data-v="3">Lento</button></div>
       <p class="help" id="paceHelp"></p></div>
-    <label class="f" title="Keys 1 and 2 override it."><div>Gate music<p class="help">Mutes the mic while music plays.</p></div>
+    <label class="f" title="A click on the Mic (or keys 1 and 2) pins it until the detector hears the same thing."><div>Gate music<p class="help">Mutes the mic while music plays.</p></div>
       <input type="checkbox" class="sw" id="autoMode"></label>
     <label class="f" title="Mutes the mic while the congregation prays aloud together (many voices at once), measured from the sound itself. Experimental: tuned on one service so far."><div>Gate prayer<span class="exp">Experimental</span><p class="help">Mutes the mic during communal prayer.</p></div>
       <input type="checkbox" class="sw" id="autoPrayer"></label>
@@ -594,6 +615,8 @@
       <input type="checkbox" class="sw" id="webStream"></label>
     <label class="f hide" id="ppWrap" title="Needs CT_PROPRESENTER_URL and CT_PROPRESENTER_MESSAGE."><div>ProPresenter<p class="help">Show captions in a ProPresenter message.</p></div>
       <input type="checkbox" class="sw" id="ppStream"></label>
+    <label class="f" id="attWrap" title="The Attendant (Luke 4:20) names the Bible verse in focus: cited, alluded to, or being read. It shows it in a pill next to Ready: amber when it is in view, green while he reads it. It only detects; nothing is projected. Needs an Anthropic or OpenAI key."><div>Attendant<span class="exp">Experimental</span><p class="help" id="attHelp">Names the verse cited or read.</p></div>
+      <input type="checkbox" class="sw" id="attendant"></label>
   </section>
 
   <section class="dsec" id="sec-voice">
@@ -1924,8 +1947,8 @@ document.addEventListener('keydown',e=>{
   else if(e.key==='w'||e.key==='W'){ clearWall(); }
   // Service mode on 1/2. Digits rather than initials because the operator is
   // reaching for these mid-service without looking.
-  else if(e.key==='1'){ setServiceMode('speaking','key'); }
-  else if(e.key==='2'){ setServiceMode('singing','key'); }
+  else if(e.key==='1'){ operatorMode('speaking','key'); }
+  else if(e.key==='2'){ operatorMode('singing','key'); }
 });
 
 // ---- the service's languages ----------------------------------------------
@@ -2244,10 +2267,65 @@ let autoPrayer=false;
 // shut with the socket closed and no captions until someone noticed the badge.
 // A hold the OPERATOR placed is an instruction and stays put.
 let modeByDetector=false;   // false (operator), true (music detector) or 'prayer'
-// When the mode last moved, for any reason. The music detector treats this as an
-// anti-strobe guard AND as respect for a manual correction: an operator who has
-// just overruled it gets MD_GUARD_MS before it argues back.
+// When the mode last moved, for any reason. The detectors treat this as an
+// anti-strobe guard: MD_GUARD_MS between one move and the next.
 let lastModeAt=0;
+// ---- the operator's pin ------------------------------------------------------
+// An operator's click (or key 1/2) while a Gate is on PINS the mode: no detector
+// moves it until every Gate that could argue AGREES with it, and then the pin lets
+// go by itself (2026-11-15). The click used to overrule a detector for MD_GUARD_MS
+// only, so unmuting for a pastor talking over the keyboard pad bought five seconds
+// before Gate music muted again -- and again, until the music stopped.
+//   Pinned on (unmuted): the Gates take over again once they hear speech too, so
+//     the next song still mutes by itself. Music under the whole sermon: it stays on.
+//   Pinned muted: Gate music takes the hold over once it hears the music too, and
+//     ends it with the song. A mute for anything else stays until the operator
+//     lifts it (Gate music used to lift any mute after 5 s of speech).
+// A pin needs a Gate that could move the mode: muted needs Gate music (the prayer
+// gate never touches an operator's mute), on needs either. With none it is dropped.
+// Agreement counts only audio heard AFTER the pin: the detectors' own timers and
+// windows reach back seconds, and a speech timer still running from the sermon
+// would "agree" with an unmute pressed as the song starts.
+let modePin=null;                           // null, or the mode the operator pinned
+let pinAgree={music:false,prayer:false};    // which detector has come round to it
+let pinGen=0;                               // bumped by every new pin: the detectors restart their count
+function operatorMode(m,why){
+  if(!MODE_LABEL[m]) return;
+  const contested=m==='singing'?autoMode:(autoMode||autoPrayer);
+  if(contested && modePin!==m){
+    modePin=m; pinAgree={music:false,prayer:false}; pinGen++;
+    jEvent('pin',{mode:m});
+    log('info','Mic pinned '+(m==='speaking'?'on':'muted')+' by you — the Gates leave it until they hear '
+        +(m==='speaking'?'speech':'the music')+' too');
+  }
+  if(m===serviceMode){ renderModeUI(); return; }   // pressing 1 while on still pins it on
+  setServiceMode(m,why);
+}
+// One detector's reading against the pin: `agrees` when it would itself put the
+// mode where the operator did, `disagrees` when it would move it away.
+function pinHeard(who,agrees,disagrees){
+  if(!modePin) return;
+  if(agrees) pinAgree[who]=true; else if(disagrees) pinAgree[who]=false;
+  pinCheck();
+}
+function pinCheck(){
+  if(!modePin) return;
+  let why=null, adopt=false;
+  if(modePin==='singing'){
+    if(!autoMode) why='Gate music off';
+    else if(pinAgree.music){ why='Gate music hears the music too'; adopt=true; }
+  }else if(!autoMode && !autoPrayer) why='both Gates off';
+  else if((!autoMode||pinAgree.music) && (!autoPrayer||pinAgree.prayer)) why='speech heard';
+  if(!why) return;
+  const was=modePin;
+  modePin=null; pinAgree={music:false,prayer:false};
+  // The mute is Gate music's from here: it ends it when the song ends.
+  if(adopt && serviceMode==='singing') modeByDetector=true;
+  jEvent('pin',{mode:was,released:why});
+  log('info','Mic pin released ('+why+') — the Gates are in charge again');
+  renderModeUI();
+}
+// ---- end of the operator's pin ----
 function translatingNow(){ return serviceMode==='speaking'; }
 // `fromDetector` marks a call that is a GUESS rather than an instruction. Those
 // are refused while Auto is off; an operator's click or keypress never is.
@@ -2256,6 +2334,7 @@ function translatingNow(){ return serviceMode==='speaking'; }
 function setServiceMode(m,why,fromDetector){
   if(!MODE_LABEL[m] || m===serviceMode) return;
   if(fromDetector && !(fromDetector==='prayer'?autoPrayer:autoMode)) return;
+  if(fromDetector && modePin) return;        // the operator's pin: theirs to move, not a guess's
   serviceMode=m; lastModeAt=performance.now(); modeByDetector=fromDetector||false;
   jEvent('mode',{mode:m,...(why?{why}:{}),by:fromDetector==='prayer'?'prayer detector':fromDetector?'detector':'operator'});
   renderModeUI();
@@ -2313,18 +2392,21 @@ setInterval(()=>{
   ppFollowMic(listening && translatingNow());
 },1000);
 // The Mic button in the ribbon is the mode's face: Mic on = speaking, the whole
-// pipeline running; Muted = held (music), costing nothing. With Gate music on the
-// detector presses it (the dotted underline says so); a click overrules it.
+// pipeline running; Muted = held (music), costing nothing. With a Gate on the
+// detector presses it (the dotted underline says so); a click pins it (solid).
 function renderModeUI(){
   const held=!translatingNow();
   modeInd.querySelector('.mt').textContent=held?'Muted':'Mic on';
   modeInd.setAttribute('aria-pressed',held?'true':'false');
   modeInd.classList.toggle('auto',autoMode||autoPrayer);
+  modeInd.classList.toggle('pinned',!!modePin);
   modeInd.title=(held
       ? 'Muted: the pipeline is held and costs nothing. Click to unmute (1).'
       : 'Mic on: the full pipeline is running. Click to mute it, e.g. for music (2).')
-    +(autoMode?'\nGate music is on: the music detector moves this; your click overrules it.':'')
-    +(autoPrayer?'\nGate prayer is on: the prayer detector moves this; your click overrules it.':'');
+    +(modePin==='speaking'?'\nPinned on by you: the Gates leave it on until they hear speech too, then take over again.'
+     :modePin==='singing'?'\nPinned muted by you: Gate music takes the mute over once it hears the music too, and ends it with the song. Otherwise it stays muted until you unmute.'
+     :(autoMode?'\nGate music is on: the music detector moves this; a click pins it until the detector agrees.':'')
+     +(autoPrayer?'\nGate prayer is on: the prayer detector moves this; a click pins it until the detector agrees.':''));
   autoModeBox.checked=autoMode; autoPrayerBox.checked=autoPrayer;
   renderLights();
 }
@@ -2340,8 +2422,8 @@ function renderHearChip(){
   const prayer=pg.score!=null && pg.score<PG_ON;
   if(listening && serviceMode==='singing' && modeByDetector===true){ label='Music'; holding=true; why='Gate music is muting the mic for music.'; }
   else if(listening && serviceMode==='prayer'){ label='Prayer'; holding=true; why='Gate prayer is muting the mic for communal prayer.'; }
-  else if(listening && music){ label='Music?'; why=autoMode?'Music heard: Gate music mutes the mic if it lasts.':'Music heard. Gate music is off, so the mic stays on.'; }
-  else if(listening && prayer){ label='Prayer?'; why=autoPrayer?'Communal prayer heard: Gate prayer mutes the mic if it lasts.':'Communal prayer heard. Gate prayer is off, so the mic stays on.'; }
+  else if(listening && music){ label='Music?'; why=modePin==='speaking'&&autoMode?'Music heard, but you pinned the mic on: Gate music takes over again once it hears speech.':autoMode?'Music heard: Gate music mutes the mic if it lasts.':'Music heard. Gate music is off, so the mic stays on.'; }
+  else if(listening && prayer){ label='Prayer?'; why=modePin==='speaking'&&autoPrayer?'Communal prayer heard, but you pinned the mic on: Gate prayer takes over again once it hears one voice.':autoPrayer?'Communal prayer heard: Gate prayer mutes the mic if it lasts.':'Communal prayer heard. Gate prayer is off, so the mic stays on.'; }
   else if(listening){ label='Speech'; why='Neither music nor communal prayer heard.'; }
   if(hearChip.textContent!==label) hearChip.textContent=label;
   hearChip.hidden=!label;
@@ -2349,7 +2431,7 @@ function renderHearChip(){
   hearChip.title=why;
 }
 modeInd.addEventListener('click',()=>{
-  setServiceMode(translatingNow()?'singing':'speaking','operator');
+  operatorMode(translatingNow()?'singing':'speaking','operator');
   // Hand focus back to the document: the global keydown handler ignores events
   // targeted at a BUTTON, so this left focused would eat the very shortcut (1)
   // the operator reaches for next to reopen the gate.
@@ -2378,6 +2460,7 @@ autoModeBox.addEventListener('change',()=>{
     // reopen it. An operator's own hold is untouched.
     setServiceMode('speaking','gate music switched off');
   }
+  pinCheck();        // a pin no Gate can contest any more is dropped
 });
 autoPrayerBox.addEventListener('change',()=>{
   autoPrayer=autoPrayerBox.checked;
@@ -2390,6 +2473,7 @@ autoPrayerBox.addEventListener('change',()=>{
   // unwatched, and switching off releases a hold the detector placed.
   if(autoPrayer){ pg.onSince=0; pg.offN=0; lastModeAt=performance.now(); pgRenderDiag(); }
   else if(serviceMode==='prayer' && modeByDetector==='prayer') setServiceMode('speaking','gate prayer switched off');
+  pinCheck();
 });
 // ---- model names and health, for the header's lights ------------------------
 // Escapes for both text and ATTRIBUTE positions (hence the quotes) -- shared by
@@ -2482,6 +2566,88 @@ async function pollPipe(){
   renderLights();
 }
 setInterval(pollPipe,3000);
+// The Attendant's pill: follows /verse-feed's state events (scripts/verse_detect.py).
+//   armed  (amber, dashed) -- a passage is in view: cited, named, or alluded to.
+//   active (green)         -- he is reading it, verse by verse ("Paused" through an
+//                             aside), or asked for it on the screen (pulsing).
+//   idle                   -- the reading is over: the pill fades and goes.
+// Nothing is sent anywhere from here: it is for the operator to act on.
+const VERSE_FADE_MS=20000;
+let verseSeq=0, verseCur=null, attendant=false, attStatus=null;
+// Settings › Wall › Attendant: the switch is saved with the other settings and
+// told to the server at load and on each change; the line under it says what
+// the server has (which models) or why it could not start.
+function renderAttendant(st){
+  if(st) attStatus=st;
+  st=attStatus||{};
+  $('attendant').checked=attendant;
+  $('attHelp').textContent=!attendant ? 'Off. Names the verse cited or read.'
+    : st.on ? 'On · '+st.how : st.err ? 'Not running: '+st.err : 'Starting…';
+  if(!attendant || !st.on){ $('versePill').classList.add('hide'); verseCur=null; }
+}
+async function sendAttendant(){
+  try{
+    const r=await fetch('/verse',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'enable',on:attendant})});
+    renderAttendant(await r.json());
+  }catch(e){ renderAttendant({err:'the server did not answer'}); }
+}
+$('attendant').addEventListener('change',()=>{
+  attendant=$('attendant').checked;
+  saveSettings(); renderAttendant(); sendAttendant();
+  log('info','Attendant '+(attendant?'ON (experimental)':'OFF'));
+});
+function showVerse(){
+  const pill=$('versePill'), v=verseCur, now=Date.now();
+  if(!v || (v.idleAt && now>v.idleAt+VERSE_FADE_MS)){ pill.classList.add('hide'); return; }
+  pill.classList.remove('hide');
+  pill.classList.toggle('strong',v.state==='active');
+  pill.classList.toggle('alert',v.state==='alert' && !v.idleAt);
+  pill.classList.toggle('req',v.why==='request' && now<v.since+60000);
+  pill.classList.toggle('stale',!!v.idleAt);
+  $('verseRef').textContent=v.local||v.ref||'(nothing named yet)';
+  $('verseWhy').textContent=v.idleAt?'Done':v.state==='armed'?(v.imminent?'Reading next':v.why==='allusion'?'Allusion':'Cited')
+    :v.why==='request'?'Requested':v.paused&&now-v.pausedAt>1500?'Paused':v.corrected?'Reading · not '+v.corrected:'Reading';
+  pill.title=v.state==='alert'&&!v.idleAt ? 'Attendant — alert: he sounds about to quote or cite Scripture'
+    : 'Attendant — '+(v.idleAt?'finished':v.state)+': '+(v.ref||'')
+    +(v.corrected?'\nHe named '+v.corrected+'; the words are from '+v.ref+'.':'')
+    +(v.spoken?'\n“'+v.spoken+'”':'')+'\nClick to copy the reference.';
+}
+function takeVerse(e){
+  if(e.type!=='state') return;
+  const now=Date.now();
+  if(e.state==='idle'){
+    if(verseCur && verseCur.state==='alert') verseCur=null;      // an alert that came to nothing: gone
+    else if(verseCur) verseCur.idleAt=now;
+    return;
+  }
+  // "Paused" shows only once a pause has lasted 1.5 s: the tracker can hear a
+  // breath as an aside, and a label flickering Paused/Reading is noise
+  const pausedAt=e.paused?(verseCur&&verseCur.paused?verseCur.pausedAt:now):0;
+  verseCur={state:e.state, why:e.why, ref:e.ref, local:e.local, paused:!!e.paused, pausedAt, imminent:!!e.imminent,
+            spoken:e.spoken, corrected:e.corrected_from||(verseCur&&verseCur.state===e.state&&verseCur.ref&&e.ref
+              &&verseCur.ref.split(':')[0]===e.ref.split(':')[0]?verseCur.corrected:null), since:(verseCur&&verseCur.why===e.why&&verseCur.state===e.state)?verseCur.since:now};
+  if(e.why==='request') log('warn','Attendant: REQUESTED '+(e.local||e.ref||'nothing named yet')+(e.spoken?' — “'+e.spoken+'”':''));
+  else if(e.state==='active' && e.was!=='active') log('info','Attendant: reading '+(e.local||e.ref));
+}
+async function pollVerse(){
+  if(!attendant) return;
+  let d;
+  try{ d=await (await fetch('/verse-feed?since='+verseSeq,{cache:'no-store'})).json(); }catch(e){ return; }
+  if(!!d.on!==!!(attStatus&&attStatus.on)) renderAttendant(d);
+  if(!d.on) return;
+  if(d.seq<verseSeq) verseSeq=0;              // the server restarted
+  for(const e of d.events||[]){ verseSeq=Math.max(verseSeq,e.seq); takeVerse(e); }
+  showVerse();
+}
+$('versePill').addEventListener('click',()=>{
+  if(!verseCur) return;
+  const r=verseCur.local||verseCur.ref; if(!r) return;
+  try{ navigator.clipboard.writeText(r); log('info','Copied '+r); }catch(e){}
+});
+// Four times a second: the Attendant now follows him verse by verse, and a second
+// of polling was a second of lag (the speed lab measured with 250 ms).
+setInterval(pollVerse,250);
 // Build the source/target language menus from /caps. Source includes "auto"
 // (default); target is the curated TTS-safe list only. Restores any persisted
 // pick if it's still valid, else falls back to the default.
@@ -2684,7 +2850,7 @@ function saveSettings(){
            langs:langs.join(','),autoFlip,
            // autoMode (may a detector move the badge?) persists; serviceMode
            // itself deliberately does not -- see setServiceMode.
-           autoMode,autoPrayer,
+           autoMode,autoPrayer,attendant,
            model:modelSel.value,
            speed:speedEl.value,
            elVoice:elVoice.value,ttsOut:ttsOutSel.value,
@@ -2754,6 +2920,7 @@ function loadSettings(){
   if(s.autoFlip!=null)autoFlip=!!s.autoFlip;
   if(s.autoMode!=null)autoMode=!!s.autoMode;
   if(s.autoPrayer!=null)autoPrayer=!!s.autoPrayer;
+  if(s.attendant!=null)attendant=!!s.attendant;
   // Stashed rather than applied: the xAI options don't exist until /caps
   // lands, so a persisted Grok pick is re-applied in buildXaiOptions (same
   // dataset.want pattern the language menus use).
@@ -3525,9 +3692,9 @@ function considerFlip(text,tokenLangs,reason){
 // fed it first, so Soniox hears the sentence from before the detector (or the
 // operator) noticed it had begun.
 let sonioxSuspended=false;
-// Long enough to cover the detector's release (~1-1.5 s, MD_OFF_FAST_N) plus the
+// Long enough to cover the detector's release (~2-2.5 s, MD_OFF_FAST_N) plus the
 // reconnect, short enough to carry little of the song's last bar.
-const PREROLL_MS=2000;
+const PREROLL_MS=3000;
 let preroll=[], prerollMs=0, prerollArmed=false, prerollCapMs=PREROLL_MS;
 function prerollReset(arm){ preroll=[]; prerollMs=0; prerollArmed=!!arm; prerollCapMs=PREROLL_MS; }
 function applyPipelineGate(why){
@@ -3598,6 +3765,7 @@ async function startSonioxStream(){
   lastSpeechAt=performance.now();
   resetDirection();
   mdReset();         // detector state is per-session; a stale window would decide the first seconds
+  pinAgree={music:false,prayer:false};   // a pin survives Stop/Start like the mode; last session's agreement does not
   sonioxSuspended=false;   // a new session always starts with the pipeline open
   prerollReset(false);     // last session's held audio is not this one's
   sonioxRetries=0;   // fresh retry budget for this listening session
@@ -3749,7 +3917,8 @@ function pgReset(){
   const band=[pgBiquad('hp',300,0.707),pgBiquad('hp',300,0.707),pgBiquad('lp',3400,0.707),pgBiquad('lp',3400,0.707)];
   const envLp=[pgBiquad('lp',20,0.707),pgBiquad('lp',20,0.707)];
   pg={band,envLp,raw:new Float32Array(PG_WIN),rw:0,filled:0,env:new Float32Array(PG_WIN/PG_ENV_DS),ew:0,
-      envN:0,acc:0,accN:0,since:0,hist:[],score:null,fast:null,feat:null,onSince:0,offN:0,levels:[],tops:[],clear:false,back:false};
+      envN:0,acc:0,accN:0,since:0,hist:[],score:null,fast:null,feat:null,onSince:0,offN:0,levels:[],tops:[],clear:false,back:false,
+      pinGen:-1,pinN:0};
 }
 pgReset();
 function pgFeed(frame,sampleRate){
@@ -3857,11 +4026,24 @@ const MD_ON_MS=2500, MD_OFF_MS=1500;
 // MD_OFF_MS, ~4.5 s in all, and on 2026-10-18 the first caption after nearly
 // every song started mid-sentence ("Christos. Frați și surori", "Lui, ne-am fi
 // bucurat"). So this many newest windows all at or under MD_OFF end the hold by
-// themselves, ~1-1.5 s after speech begins (YAMNet tells a sermon from a song
+// themselves, ~2-2.5 s after speech begins (YAMNet tells a sermon from a song
 // reliably, Joseph 2026-10-18). A false release costs a lyric line or two before
-// the ON side (unchanged) closes it again.
-const MD_OFF_FAST_N=2;
-const MD_GUARD_MS=5000;         // anti-strobe, and respect for a manual correction
+// the ON side closes it again, and the guard keeps it open ~5 s first: with 2
+// windows here, the five songs of the 2026-11-10 service became 20 mutes, nine
+// of them inside one 3.5-minute stretch.
+const MD_OFF_FAST_N=4;
+// The mirror of that, for the start of a song: the median of 9 needs 5 music
+// windows and MD_ON_MS then runs, so the first ~4.5 s of every song were
+// translated as speech. This many newest windows all at or over MD_FAST_ON_AT
+// close the gate by themselves, ~2 s in. Two windows at 90 % would be quicker
+// still but added mutes and muted speech (2 windows at 90 %: +3 mutes, +10 s of
+// speech on 2026-11-10; +4 mutes, +7 s on 2026-11-03); four at 80 % added no mute
+// on either (validation/scripts/music_detect_stress.py --from-csv ... --sweep).
+const MD_FAST_ON_N=4, MD_FAST_ON_AT=0.8;
+const MD_GUARD_MS=5000;         // anti-strobe: the least time between two moves
+// Windows counted since the operator's pin (see "the operator's pin"): mdSeq counts
+// every informative window, mdPinFrom is where the current pin's count starts.
+let mdSeq=0, mdPinGen=-1, mdPinFrom=0;
 let yamSession=null, yamState='idle', yamBusy=false;
 let mdRing=new Float32Array(YAM_WIN), mdW=0, mdFilled=0, mdSinceRun=0;
 let mdAcc=0, mdAccN=0;
@@ -3887,6 +4069,7 @@ async function mdLoad(){
 function mdReset(){
   mdW=0; mdFilled=0; mdSinceRun=0; mdAcc=0; mdAccN=0;
   mdRaw=[]; mdScore=0; mdFeat=null; mdOnSince=0; mdOffSince=0;
+  mdPinGen=-1;       // a pin carried over Stop/Start counts afresh
   mdRenderDiag();
 }
 // Decimate to YAM_SR with a box filter. Crude as an anti-alias, but YAMNet reads
@@ -3930,7 +4113,7 @@ async function mdRun(){
     const informative=Math.max(m,s)>=YAM_MIN_CONF;
     const raw=informative ? m/(m+s) : null;
     if(informative){
-      mdRaw.push(raw);
+      mdRaw.push(raw); mdSeq++;
       while(mdRaw.length>MD_MEDIAN_N) mdRaw.shift();
       const sorted=mdRaw.slice().sort((a,b)=>a-b);
       mdScore=sorted[sorted.length>>1];             // median
@@ -3947,9 +4130,21 @@ function mdDecide(now){
   if(mdScore>=MD_ON){ mdOffSince=0; if(!mdOnSince) mdOnSince=now; }
   if(mdScore<=MD_OFF){ mdOnSince=0; if(!mdOffSince) mdOffSince=now; }
   mdRenderDiag();
+  // Pinned by the operator: not ours to move, only to agree with. The same rules
+  // that would have moved it, read over the windows heard since the pin only (the
+  // fast rules, or the median of at least 5). No guard: agreeing moves nothing.
+  if(modePin){
+    if(mdPinGen!==pinGen){ mdPinGen=pinGen; mdPinFrom=mdSeq; }
+    const n=Math.min(mdSeq-mdPinFrom,mdRaw.length), post=n?mdRaw.slice(-n):[];
+    const med=n>=5?post.slice().sort((a,b)=>a-b)[n>>1]:null;
+    const pMusic=(n>=MD_FAST_ON_N && post.slice(-MD_FAST_ON_N).every(v=>v>=MD_FAST_ON_AT)) || (med!=null && med>=MD_ON);
+    const pSpeech=(n>=MD_OFF_FAST_N && post.slice(-MD_OFF_FAST_N).every(v=>v<=MD_OFF)) || (med!=null && med<=MD_OFF);
+    return pinHeard('music',modePin==='singing'?pMusic:pSpeech,modePin==='singing'?pSpeech:pMusic);
+  }
   if(now-lastModeAt<MD_GUARD_MS) return;
   const pct=Math.round(mdScore*100)+'%';
-  if(serviceMode!=='singing' && mdOnSince && now-mdOnSince>=MD_ON_MS)
+  const sure=mdRaw.length>=MD_FAST_ON_N && mdRaw.slice(-MD_FAST_ON_N).every(v=>v>=MD_FAST_ON_AT);
+  if(serviceMode!=='singing' && ((mdOnSince && now-mdOnSince>=MD_ON_MS) || sure))
     setServiceMode('singing','music '+pct,true);
   else if(serviceMode==='singing'){
     const fast=mdRaw.length>=MD_OFF_FAST_N && mdRaw.slice(-MD_OFF_FAST_N).every(v=>v<=MD_OFF);
@@ -3974,6 +4169,16 @@ function pgDecide(now){
     setServiceMode('speaking',(pg.back?'speaker back':'prayer ended')+', score '+(pg.fast??0).toFixed(2),'prayer');
     return;
   }
+  // Pinned by the operator: agrees when one voice is back (its own release), read
+  // only from windows since the pin -- the fast score spans PG_FAST_N of them, and
+  // PG_OFF_N of those scores in a row, so that many windows first -- and disagrees
+  // when it would hold.
+  if(modePin){
+    if(pg.pinGen!==pinGen){ pg.pinGen=pinGen; pg.pinN=0; }
+    pg.pinN++;
+    return pinHeard('prayer',!!(pg.back || (pg.pinN>=PG_FAST_N+PG_OFF_N-1 && pg.offN>=PG_OFF_N)),
+                    !!(pg.onSince && now-pg.onSince>=PG_ON_MS && !musicHeard()));
+  }
   if(now-lastModeAt<MD_GUARD_MS) return;
   if(serviceMode==='speaking' && pg.onSince && now-pg.onSince>=PG_ON_MS && !musicHeard())
     setServiceMode('prayer','communal prayer, score '+pg.score.toFixed(2),'prayer');
@@ -3982,7 +4187,8 @@ function pgRenderDiag(){
   if(!diagOpen) return;
   const f=x=>x==null?' —  ':x.toFixed(2);
   diagPrayer.textContent='prayer detector  score '+f(pg.score)+' ('+PG_AVG_N+' s)  '+f(pg.fast)+' (3 s)   hold<'+PG_ON.toFixed(2)
-    +' '+(PG_ON_MS/1000)+'s · release>'+PG_OFF.toFixed(2)+'   '+(autoPrayer?'AUTO':'gate off — observing only')+'\n'
+    +' '+(PG_ON_MS/1000)+'s · release>'+PG_OFF.toFixed(2)+'   '
+    +(!autoPrayer?'gate off — observing only':modePin?'PINNED by you'+(pinAgree.prayer?' — agrees':''):'AUTO')+'\n'
     +'  depth '+f(pg.feat&&pg.feat.depth)+'  pitch '+f(pg.feat&&pg.feat.harm)+'   (one voice ~1.1 / 0.7; a praying room ~0.3 / 0.4)';
 }
 function mdRenderDiag(){
@@ -3997,7 +4203,7 @@ function mdRenderDiag(){
   diagMusic.textContent=
     'music score '+p(mdScore)+' (median of '+mdFeat.n+')   on≥'+p(MD_ON)+' '+(MD_ON_MS/1000)+'s'
       +' · off≤'+p(MD_OFF)+' '+(MD_OFF_MS/1000)+'s   '
-      +(autoMode?'AUTO':'auto off — observing only')+'\n'
+      +(!autoMode?'auto off — observing only':modePin?'PINNED by you'+(pinAgree.music?' — agrees':''):'AUTO')+'\n'
     +'  YAMNet music '+p(mdFeat.music)+'  speech '+p(mdFeat.speech)
       +'  this window '+(mdFeat.informative?p(mdFeat.raw):' — (too quiet to judge)')
       +'   '+mdFeat.ms.toFixed(0)+'ms/run';
@@ -5289,7 +5495,7 @@ function nvCommit(k){       // commit pairs 0..k: their translation as one capti
   if(tg){ if(nvSealedSeq) holdUnit(nvSealedSeq,tg,nvSealed); return; }
   if(!text) return;
   const cell=el||addTgtRow();
-  if(routerOn()){ routerCommit(nvSealed,text,cell,spoken,span,nvLang||(langs&&langs[0])||'en',nvSealedSeq); return; }
+  if(routerOn()){ routerCommit(nvSealed,text,cell,spoken,span,nvLang||(langs&&langs[0])||'en',nvSealedSeq,srcConf); return; }
   nvShow(text,cell,spoken,nvLang||(langs&&langs[0])||'en','soniox');
 }
 function nvShow(text,cell,spoken,lang,why,by){   // one caption to the wall, the voice and every output
@@ -5318,25 +5524,30 @@ function nvShow(text,cell,spoken,lang,why,by){   // one caption to the wall, the
 // sent-on segment also takes every ear's text of it (whole, partial or the same
 // as Soniox's); one sent on as a likely mis-hearing first waits for each ear to
 // hear it out (last word and a word past it), up to CT_EAR_WAIT_MS past its seal.
+// Soniox's per-word confidence in the segment rides on both calls: the
+// translator gets the low words bracketed (translate_claude.unsure_turn), and
+// when the check gives no answer, a word under CT_ROUTER_UNSURE stands in for
+// it and sends the line on as a likely mis-hear (router_gate.decide).
 const ROUTER_MT_MS=4000, ROUTER_CTX=12;
 let routerChain=Promise.resolve(), routerCtx=[];
-function routerCommit(ro,en,cell,spoken,span,lang,seq){
+function routerCommit(ro,en,cell,spoken,span,lang,seq,conf){
   const ctx=routerCtx.slice();
   // This segment's own entry: later segments are pushed while it waits its turn,
   // so a sent-on translation updates this object, never routerCtx's last slot.
   const mine={ro,en};
   routerCtx.push(mine); if(routerCtx.length>ROUTER_CTX) routerCtx.shift();
   const t0=performance.now();                    // Soniox's segment final: the hold runs from here to the caption
-  const check=routerCheck(ro,en,ctx);           // starts now, in parallel with any caption still ahead
+  const check=routerCheck(ro,en,ctx,conf);      // starts now, in parallel with any caption still ahead
   routerChain=routerChain.then(async()=>{
-    const d=await check;
+    let d=await check;
+    if(!d) d=unsureStandIn(conf);                // no answer in time: a low word still sends it on
     let text=en, why='soniox', by='Soniox';
     if(d && d.route){
       RT.sent++; RT.why[d.why]=(RT.why[d.why]||0)+1;
       const model=modelSel.value;
       const clues=earClueFields([seq]);
       if(clues.readings) RT.earAsk++;
-      const res=await routerTranslate(ro,lang,model,{en,why:d.why},span,clues), t=res&&res.text;
+      const res=await routerTranslate(ro,lang,model,{en,why:d.why},span,clues,conf), t=res&&res.text;
       if(res&&res.ears){ RT.earGot++; if(seq) showEarsUsed(seq,res.ears); }
       if(t){ text=t; why='router-'+(d.why||'translation'); by=model;
              log('info','Router → '+model+': '+t.slice(0,60)+(res.ears?' (with an ear\'s reading)':'')); }
@@ -5345,27 +5556,35 @@ function routerCommit(ro,en,cell,spoken,span,lang,seq){
     noteLat('route_hold',performance.now()-t0);
     if(cell.j){
       cell.j.hold_ms=Math.round(performance.now()-t0);
-      cell.j.route=d?{bad:d.bad,sens:d.sens,sl:d.sl,ms:d.ms,sent:!!d.route,why:d.why||''}:{timeout:true};
+      cell.j.route=d&&d.standin?{timeout:true,low:d.low,sent:true,why:d.why}
+        :d?{bad:d.bad,sens:d.sens,sl:d.sl,low:d.low,ms:d.ms,sent:!!d.route,why:d.why||''}:{timeout:true};
       if(d&&d.route&&why==='soniox') cell.j.route.kept='translator failed or slow';
       if(why!=='soniox') cell.j.soniox_en=en;
     }
     if(why==='soniox') fetch('/history',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({src:ro,tgt:en,target_lang:lang,...(sessionPair()?{pair:sessionPair()}:{})})}).catch(()=>{});
     else mine.en=text;
-    if(d) log('info','Router '+d.ms+'ms bad '+(d.bad==null?'-':d.bad.toFixed(2))+' sens '+(d.sens==null?'-':d.sens.toFixed(2))+' sl '+(d.sl==null?'-':d.sl.toFixed(2))
+    if(d&&d.standin) log('info','Router: no answer in time, word at '+d.low.toFixed(2)+' → misheard');
+    else if(d) log('info','Router '+d.ms+'ms bad '+(d.bad==null?'-':d.bad.toFixed(2))+' sens '+(d.sens==null?'-':d.sens.toFixed(2))+' sl '+(d.sl==null?'-':d.sl.toFixed(2))+' low '+(d.low==null?'-':d.low.toFixed(2))
               +(d.route?' → '+d.why+(why==='soniox'?' (kept)':''):''));
     nvShow(text,cell,spoken,lang,why,by);
   }).catch(e=>{ log('warn','Router: '+e.message); noteLat('route_hold',performance.now()-t0);
     if(cell.j) cell.j.route={error:e.message}; nvShow(en,cell,spoken,lang,'soniox','Soniox'); });
 }
-async function routerCheck(ro,en,ctx){
+function unsureStandIn(conf){
+  const bar=+caps.router_unsure||0, cs=(conf||[]).filter(c=>c!=null);
+  if(!bar||!cs.length) return null;
+  const low=Math.min(...cs);
+  return low<bar ? {route:true,why:'misheard',low,bad:null,sens:null,sl:null,ms:null,standin:true} : null;
+}
+async function routerCheck(ro,en,ctx,conf){
   if(!ro) return null;
   const ctl=new AbortController(), t0=performance.now();
   const cap=setTimeout(()=>ctl.abort(), +caps.router_timeout_ms||1200);
   RT.checks++;
   try{
     const r=await fetch('/route',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ro,en,ctx}),signal:ctl.signal});
+      body:JSON.stringify({ro,en,ctx,...(conf&&conf.length?{conf}:{})}),signal:ctl.signal});
     const d=await r.json(); noteLat('route',performance.now()-t0);
     if(typeof d.ms==='number') noteLat('route_srv',d.ms);   // the OpenAI calls alone, timed on the server
     return d;
@@ -5376,7 +5595,7 @@ async function routerCheck(ro,en,ctx){
 // the hearing model also gets the segment's audio.
 // The translator's light follows these calls too: under the Decision Router they
 // are the only calls the translator gets.
-async function routerTranslate(text,lang,model,flagged,span,clues){
+async function routerTranslate(text,lang,model,flagged,span,clues,conf){
   let slow=false;
   const ctl=new AbortController(), t0=performance.now();
   const cap=setTimeout(()=>{ slow=true; ctl.abort(); },ROUTER_MT_MS);
@@ -5384,6 +5603,7 @@ async function routerTranslate(text,lang,model,flagged,span,clues){
     const pair=sessionPair();
     const r=await fetch('/translate',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({text,target_lang:lang,model,tts:false,flagged,...(pair?{pair}:{}),
+        ...(conf&&conf.length?{conf}:{}),
         ...(model===HEAR_MODEL && span?{hear:true}:{}),
         ...clues,
         // a likely mis-hearing waits for the ears to hear it out, at most the
@@ -6750,6 +6970,7 @@ function encodeWAV(samples,sampleRate){
 try { loadTheme(); } catch(e) { console.warn('loadTheme', e); }
 try { await pullServerSettings(); } catch(e) { console.warn('pullServerSettings', e); }
 try { loadSettings(); } catch(e) { console.warn('loadSettings', e); }
+try { renderAttendant(); sendAttendant(); } catch(e) { console.warn('attendant', e); }
 // After loadSettings, so the badge shows the restored autoMode. The MODE itself
 // is always SPEAKING on load -- deliberately not persisted (see setServiceMode).
 renderModeUI();

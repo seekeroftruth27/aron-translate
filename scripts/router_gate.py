@@ -119,10 +119,13 @@ def _ask(text, qs, timeout):
     return out
 
 
-def decide(ro, en, ctx, timeout=1.0, th=0.5):
+def decide(ro, en, ctx, timeout=1.0, th=0.5, conf=None, unsure=0.0):
     """-> {"route": bool, "bad": P(not good), "sens": P(offensive), "sl": P(misheard)
-    (each None when unanswered), "why": "translation"|"sensitive"|"misheard"|"",
-    "ms": wall time}. A call that fails or times out counts as no opinion; the
+    (each None when unanswered), "low": Soniox's least confident word in ro (None
+    without `conf`), "why": "translation"|"sensitive"|"misheard"|"",
+    "ms": wall time}. When the mis-hear check gives no answer, a word scored under
+    `unsure` (server.py ROUTER_UNSURE) stands in for it and makes the line
+    "misheard". A call that fails or times out counts as no opinion; the
     caller keeps Soniox's text. `th` is the bar for the two doubts (mis-heard,
     badly translated): CT_ROUTER_THRESHOLD (server.py ROUTER_TH), 0.3 by default (0.3 from
     2026-10-19, 0.2 for 2026-10-28..30: validation/results/2026-10-28-router-threshold,
@@ -142,9 +145,15 @@ def decide(ro, en, ctx, timeout=1.0, th=0.5):
         except Exception as e:   # noqa: BLE001 -- any failure is "no opinion"
             out.setdefault("err", f"{k}: {type(e).__name__}")
     out.update(bad=got.get("v"), sens=got.get("sens"), sl=got.get("sl"))
+    cs = [c for c in (conf or []) if isinstance(c, (int, float))]
+    out["low"] = round(min(cs), 2) if cs else None
     # A suspected mis-hear wins: the garbled word usually garbles the English
     # too (halferurit: both fire), and the hearing translator is its repair.
-    why = ("misheard" if (out["sl"] or 0) > th else
+    # Soniox's confidence only stands in for a mis-hear check that did not answer:
+    # on 188 lines with a word under 0.5 (2026-11-09), the check already flagged
+    # every mis-hear a low score pointed at.
+    unsure_low = out["sl"] is None and out["low"] is not None and out["low"] < unsure
+    why = ("misheard" if (out["sl"] or 0) > th or unsure_low else
            "translation" if (out["bad"] or 0) > th else
            "sensitive" if (out["sens"] or 0) > 0.5 else "")
     out.update(route=bool(why), why=why, ms=round(1000 * (time.perf_counter() - t0)))

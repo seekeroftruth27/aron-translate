@@ -182,6 +182,7 @@ import ears as extra_ears
 import router_gate
 import languages
 import costs
+import verse_detect
 # How long a Router check may take, page and server alike (the server's OpenAI
 # calls give up at the same point, so a slow call is never cut short below the
 # page's wait). 1200: here, warm 0.15-0.33 s and cold ~0.5 s (2026-10-08); a
@@ -200,6 +201,17 @@ try:
     ROUTER_TH = min(0.9, max(0.1, float(os.environ.get("CT_ROUTER_THRESHOLD") or 0.3)))
 except ValueError:
     ROUTER_TH = 0.3
+# When the Router's mis-hear check gives no answer (failed, or over
+# CT_ROUTER_TIMEOUT_MS), a line holding a word Soniox scored under this is sent
+# on as a likely mis-hear instead of kept. Only then: on 188 lines with a word
+# under 0.5 from four sermons and 2026-11-08 ("pe domnul Cocritan" for "pe
+# Domnul cu o cântare"), the check already flagged every mis-hear a low score
+# pointed at, so routing on the score alone added sends and caught nothing.
+# 0.3: a word under it falls in 1-3% of sermon segments. 0 turns it off.
+try:
+    ROUTER_UNSURE = min(0.9, max(0.0, float(os.environ.get("CT_ROUTER_UNSURE") or 0.3)))
+except ValueError:
+    ROUTER_UNSURE = 0.3
 from witness_align import (packet_state as witness_state, reaches_end as witness_reaches_end,
                            stale as witness_stale, WIT_NOTE)
 import voice_stream
@@ -1855,6 +1867,7 @@ def stt_stream(ws):
         threading.Thread(target=_prewarm_tts, daemon=True).start()
 
     stop = threading.Event()
+    verse_chunks = _VerseChunker()           # hands words on only while the Attendant is on
 
     def soniox_to_browser():
         """Reader thread: Soniox token JSON -> browser, plus the credit meter."""
@@ -1869,6 +1882,8 @@ def stt_stream(ws):
                     j = json.loads(msg)
                     if ear_latch is not None:
                         ear_latch(j.get("tokens") or ())
+                    if verse_chunks is not None:
+                        verse_chunks.tokens(j.get("tokens") or ())
                     proc = float(j.get("total_audio_proc_ms") or 0)
                     if proc > last_proc:
                         _bump_usage(stt_secs=(proc - last_proc) / 1000.0)
@@ -2732,7 +2747,8 @@ def translate_ep():
 def route_ep():
     """Router (STT panel): keep Soniox's own translation of a segment, or have
     the translator model redo it? body {ro, en, ctx:[{ro,en},...]} (earlier
-    segments, oldest first; the doubt bar is ROUTER_TH). -> router_gate.decide(). The page waits only
+    segments, oldest first; the doubt bar is ROUTER_TH; optional conf, Soniox's
+    per-word confidence in ro, against ROUTER_UNSURE). -> router_gate.decide(). The page waits only
     CT_ROUTER_TIMEOUT_MS for the answer and keeps Soniox's text past that, so
     a slow call costs a check, never a caption."""
     if not HAS_OPENAI_KEY:
@@ -2742,8 +2758,11 @@ def route_ep():
     if not ro or not en:
         return jsonify(route=False), 200
     ctx = [c for c in (data.get("ctx") or []) if isinstance(c, dict)][-router_gate.SL_CTX:]
-    out = router_gate.decide(ro, en, ctx, timeout=ROUTER_TIMEOUT_MS / 1000, th=ROUTER_TH)
+    conf = data.get("conf") if isinstance(data.get("conf"), list) else None
+    out = router_gate.decide(ro, en, ctx, timeout=ROUTER_TIMEOUT_MS / 1000, th=ROUTER_TH,
+                             conf=conf, unsure=ROUTER_UNSURE)
     print(f"[rt ] {out['ms']}ms bad {out.get('bad')} sens {out.get('sens')} sl {out.get('sl')}"
+          f" low {out.get('low')}"
           f" -> {out['why'] or 'keep'}: {en[:60]!r}", flush=True)
     return jsonify(out), 200
 
@@ -3005,6 +3024,183 @@ def pipe_status_ep():
             _PROJ_SEEN.pop(k, None)
     return jsonify(projectors=sum(1 for t in list(_PROJ_SEEN.values()) if now - t < 15),
                    web=_RELAY_HEALTH.get("publish"))
+
+
+# ---- The Attendant: which Bible verse is in focus (scripts/verse_detect.py) ----
+# Is the speaker citing a verse ("Ioan 1:1", a bare "versetul 4" after a chapter
+# he named), alluding to one, or reading Scripture right now? Models name the
+# verse; no Bible text is kept. Off until Settings switches it on (Wall ›
+# Attendant), or from the start with CT_VERSE=1. It reads Soniox's words on
+# /stt-stream as they are drafted (a confirmed word comes ~4.7 s after it is
+# spoken, a draft ~0.5 s), in small packets, with its model calls in parallel,
+# and only reports: GET /verse-feed for whoever polls, and CT_VERSE_WEBHOOK, if
+# set, gets each event as a JSON POST. What to do with an event (arm
+# ProPresenter, show the verse) is the listener's business.
+#   CT_VERSE          1: on from the start (Settings can still switch it)
+#   CT_VERSE_WEBHOOK  URL to POST each event to (optional)
+#   CT_VERSE_MEMORY   the scratchpad file (default <project>/recordings/verse_memory.json)
+#   CT_VERSE_MODEL    names a new passage: gpt-6-sol (OpenAI key) by default, else
+#                     claude-haiku-5-5 (Anthropic key)
+#   CT_VERSE_BLIND_MODEL  the rare blind check after a citation ("is he reading what he
+#                     named?"): claude-opus-5-5 (Anthropic key), else CT_VERSE_MODEL
+#   CT_VERSE_TRACK_MODEL  follows a known passage from memory: gpt-6-sol (OpenAI key)
+#   CT_VERSE_TEXT     on (default): fetch the passage's text and track with one Luna call a
+#                     packet (Sol only until the text is here); off: Sol tracks from memory
+#   CT_VERSE_BIBLE    a getBible translation for the verse text (e.g. cornilescu); unset:
+#                     CT_VERSE_RECITE_MODEL (gpt-6-luna) recites the verses from memory
+#   CT_VERSE_TRANSLATION  the translation's name for the reciter (e.g. Cornilescu)
+#   CT_VERSE_GATE     luna (default with an OpenAI key): a Luna decision on each packet
+#                     ("is Scripture coming? enough to name it?"); off: no gate
+#   CT_VERSE_FOCUS    on (default): a reading goes active only after he brings the text into
+#                     focus ("versetul 4", "să citim") or asks for it; else it stays armed
+#   CT_VERSE_SEATED   on (default): "please be seated" ends a reading at once
+#   CT_VERSE_IDLE     segment (default): at rest, a packet a clause (the Router's cadence);
+#                     words: every 6 words
+#   CT_VERSE_READ_EARLY  digits (default): a number starts the reader alongside the gate;
+#                     alert: also every alert packet (2.21; Sol's calls cost the most)
+#   CT_VERSE_STILL    with CT_VERSE_TEXT: "is he still reading?" in the same call (text,
+#                     plain or off); CT_VERSE_STILL_TH (0.5) is where he has stopped
+#   CT_VERSE_REQUEST_WORDS  the church's own "please project it" phrases, comma-separated
+#                     (optional: the reader hears such requests anyway, a second or so later)
+VERSE = None
+VERSE_ON = False
+VERSE_RUN = None            # the Dispatcher: the detector's calls on a few threads
+_VERSE_EVENTS = deque(maxlen=400)
+_VERSE_LOCK = threading.Lock()
+_VERSE_Q = queue.Queue(maxsize=200)
+VERSE_WEBHOOK = os.environ.get("CT_VERSE_WEBHOOK", "").strip()
+
+
+def _verse_emit(ev):
+    with _VERSE_LOCK:
+        _VERSE_EVENTS.append(ev)
+    print(f"[vrs] {ev['level']} {ev['type']} {ev.get('how') or ev.get('state')} {ev['ref']}"
+          + (" cited" if ev.get("cited") else ""), flush=True)      # a reference only, never the sermon
+    if VERSE_WEBHOOK:
+        try:
+            _VERSE_Q.put_nowait(ev)
+        except queue.Full:
+            pass
+
+
+def _verse_worker():
+    """The webhook, in order; and a tick every second (alerts lapse, silence pauses
+    a reading and then ends it)."""
+    while True:
+        try:
+            ev = _VERSE_Q.get(timeout=1)
+        except queue.Empty:
+            if VERSE is not None and VERSE_ON:
+                VERSE.tick()
+            continue
+        try:
+            _get_http_session().post(VERSE_WEBHOOK, json=ev, timeout=3,
+                                     headers={"User-Agent": "ChurchTranslate/1.0"})
+        except Exception as exc:
+            print(f"[vrs] webhook error: {str(exc)[:120]}", flush=True)
+
+
+def _verse_how():
+    if not verse_detect.reader():
+        return ""
+    parts = [f"verses named by {verse_detect.MODEL}"]
+    if verse_detect.BLIND_MODEL != verse_detect.MODEL:
+        parts.append(f"checked blind by {verse_detect.BLIND_MODEL}")
+    if VERSE and VERSE.text:
+        src = (f"getBible {verse_detect.BIBLE}, else " if verse_detect.BIBLE else "") + \
+            f"{verse_detect.RECITE_MODEL} reciting"
+        parts.append(f"followed with the text ({src})")
+    elif VERSE and VERSE.track:
+        parts.append(f"followed by {verse_detect.TRACK_MODEL}")
+    if VERSE and VERSE.gate:
+        parts.append(f"after a {verse_detect.DECIDE_MODEL} gate")
+    return ", ".join(parts)
+
+
+def _verse_start():
+    """Make the detector (once) -> "" or why it cannot run."""
+    global VERSE, VERSE_RUN
+    if not verse_detect.reader():
+        return "needs an Anthropic or OpenAI key"
+    if VERSE is None:
+        mem_path = os.environ.get("CT_VERSE_MEMORY") or os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "recordings", "verse_memory.json")
+        os.makedirs(os.path.dirname(mem_path), exist_ok=True)
+        VERSE = verse_detect.VerseDetector(_verse_emit, memory=verse_detect.Scratchpad(mem_path))
+        VERSE_RUN = verse_detect.Dispatcher(VERSE)
+        threading.Thread(target=_verse_worker, daemon=True).start()
+        print(f"[vrs] Attendant ready: {_verse_how()}", flush=True)
+    return ""
+
+
+class _VerseChunker:
+    """One stream's Soniox messages -> the Attendant's packets: the draft words as
+    well as the confirmed ones, a few at a time (verse_detect.Packetizer)."""
+
+    def __init__(self):
+        self.pk = verse_detect.Packetizer()
+
+    def tokens(self, toks):
+        end = self.pk.tokens(toks)
+        if VERSE is None or not VERSE_ON:
+            return
+        if VERSE.request_words:              # the church's request phrases, before the words are final
+            VERSE.hear(self.pk.wet())
+        pkt = self.pk.take(VERSE.fast(), end)
+        if pkt is not None:
+            VERSE_RUN.packet(pkt)
+
+
+if _env_on("CT_VERSE", "0"):
+    VERSE_ON = not _verse_start()
+
+
+def _verse_status(err=""):
+    err = err or ("" if verse_detect.reader() else "needs an Anthropic or OpenAI key")
+    return {"on": VERSE_ON and VERSE is not None, "how": _verse_how(), "err": err}
+
+
+@app.route("/verse-feed")
+def verse_feed_ep():
+    """Attendant events since ?since=<seq> (scripts/verse_detect.py lists them),
+    oldest first, the state, the scratchpad (what he has named or read, newest
+    first) and call counts."""
+    if VERSE is None or not VERSE_ON:
+        return jsonify(events=[], seq=VERSE.seq if VERSE else 0, **_verse_status())
+    try:
+        since = int(request.args.get("since") or 0)
+    except ValueError:
+        since = 0
+    with _VERSE_LOCK:
+        evs = [e for e in _VERSE_EVENTS if e["seq"] > since]
+    return jsonify(events=evs, seq=VERSE.seq, **_verse_status(),
+                   state={k: v for k, v in VERSE.state.items() if k != "since"},
+                   calls=dict(VERSE.stats), scratchpad=VERSE.memory.describe(VERSE.canon),
+                   errors=VERSE.errors)
+
+
+@app.route("/verse", methods=["POST"])
+def verse_ep():
+    """{action:"enable", on}: Settings' Attendant switch;
+    {action:"clear"}: empty the scratchpad (a new service);
+    {text}: feed words that did not come over /stt-stream (a tool, a test)."""
+    global VERSE_ON
+    data = request.get_json(silent=True) or {}
+    if data.get("action") == "enable":
+        err = _verse_start() if data.get("on") else ""
+        VERSE_ON = bool(data.get("on")) and not err
+        print(f"[vrs] Attendant {'on' if VERSE_ON else 'off'}" + (f" ({err})" if err else ""), flush=True)
+        return jsonify(ok=not err, **_verse_status(err))
+    if VERSE is None or not VERSE_ON:
+        return jsonify(ok=False, err="the Attendant is off"), 200
+    if data.get("action") == "clear":
+        with VERSE.lock:
+            VERSE.memory.clear()
+        return jsonify(ok=True)
+    if data.get("text"):
+        threading.Thread(target=VERSE.feed, args=(str(data["text"])[:2000],), daemon=True).start()
+        return jsonify(ok=True)
+    return jsonify(ok=False, err="action or text"), 400
 
 
 @app.route("/project", methods=["POST"])
@@ -4001,6 +4197,7 @@ def caps_ep():
         router=HAS_OPENAI_KEY,                         # /route needs OpenAI's Decisions API
         router_timeout_ms=ROUTER_TIMEOUT_MS,
         router_th=ROUTER_TH,                           # named in the session record
+        router_unsure=ROUTER_UNSURE,
         router_model=router_gate.MODEL,                # named in the session record
         soniox_model=SONIOX_RT_MODEL,                  # the Recognizer menu's default
         soniox_models=SONIOX_RT_CHOICES,               # ... and its choices
