@@ -426,6 +426,51 @@ python scripts/deploy_captions.py             # upload
 It needs the `ssh`/`scp` clients (built into Windows 10+, macOS and Linux) and a
 working SSH key to the host — test with `ssh -o BatchMode=yes user@yourhost.com echo ok`.
 
+## YouTube captions — live, and for the replay (optional)
+
+YouTube takes one caption track per live stream, and its own live auto-captions
+are English-only, so a Romanian service has no live captions on YouTube unless
+something sends them. Áron can:
+
+**Live.** In YouTube Studio: **Go live › Stream › Settings**, turn **Closed
+captions** on, choose **Post captions to URL** (HTTP), and copy the **Captions
+Ingestion URL** into `.env`:
+
+```
+CT_YOUTUBE_CAPTION_URL=<the signed URL>   # secret: anyone with it can post captions
+CT_YOUTUBE_LANG=en                         # which captions to send (default en)
+```
+
+Each finished caption in that language is posted once, stamped with when its
+words were spoken, so YouTube lines it up with the video. Stream at **Normal
+latency** (posted captions don't work at Low or Ultra-low) with a **30-60 s
+broadcast delay**, so each line arrives before viewers reach it, and keep the
+computer's clock accurate. A line fixed after it was posted keeps its first
+wording on the live track. It's best-effort, like the website: a YouTube hiccup
+never touches the room. **Settings › Wall › YouTube captions** shows how many
+lines went out, or YouTube's last error.
+
+**The replay.** After the stream, YouTube makes its own auto-captions for the
+video (Romanian is supported, with auto-translate). To offer Áron's English
+beside them, set **Stream started at** in that Settings row (it defaults to when
+you first pressed Start today) and press **.srt**; then in YouTube Studio ›
+Subtitles, add a language and upload the file. It holds the lines in the YouTube
+language from the last 12 hours, with any later fixes, timed from that start.
+`GET /youtube/captions.srt?start=<epoch ms>` returns the same.
+
+**The voice, for the replay.** YouTube can't carry a second audio language on a
+live stream, but a video can have extra audio tracks (YouTube Studio ›
+Languages › add a language › audio, where your channel has multi-language
+audio). The **.mp3** button beside **.srt** builds one: the spoken translation in
+`CT_YOUTUBE_LANG`, each sentence placed when it was voiced in the room, with
+silence between, from the same **Stream started at** time
+(`GET /youtube/voice.mp3?start=<epoch ms>`). It is made from the recording buffer
+(Rec), so it needs Speak on during the service and Rec not cleared since. The
+silence is plain mp3 frames copied in the clips' own format, so there is no
+re-encoding and no extra software. If the voice service changed mid-service, the
+file mixes two mp3 formats; most players cope, but check it before uploading.
+Live, the translated voice is on your website's **Listen** button (above).
+
 ## Projecting to ProPresenter (optional)
 
 If ProPresenter drives your auditorium screen, point a ProPresenter **web

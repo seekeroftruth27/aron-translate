@@ -1,5 +1,60 @@
 # Changelog
 
+## [v2.22.0] — 2026-11-15
+
+### Added
+- **YouTube captions, live and for the replay.** Set `CT_YOUTUBE_CAPTION_URL` to the
+  live stream's Captions Ingestion URL (YouTube Studio › Stream › Settings › Closed
+  captions › Post captions to URL) and each finished caption in `CT_YOUTUBE_LANG`
+  (default `en`) is posted live, once, stamped with when it was spoken. YouTube's own
+  live auto-captions are English-only, so for a Romanian service this is the only live
+  caption track. For the replay, **Settings › Wall › YouTube captions** downloads the
+  lines as an `.srt` timed from when the stream started, ready to upload in YouTube
+  Studio beside YouTube's auto-captions. Needs Normal latency and, as YouTube advises,
+  a 30-60 s broadcast delay.
+- **The spoken translation for the replay, as an extra YouTube audio language.** The
+  **.mp3** button beside **.srt** builds one mp3 of the voice in `CT_YOUTUBE_LANG`,
+  each sentence placed when it was voiced in the room, timed from when the stream
+  started, with silent mp3 frames in between (no re-encoding, no extra software).
+  Upload it in YouTube Studio › Languages as an audio track. Made from the recording
+  buffer, so it needs Speak on and Rec not cleared since the service.
+- **The session record says when the voice glitched, and why.** The log and
+  events now note the voice running out of audio in the middle of a sentence
+  (`voice_dry`, with how long), each speed-up to catch up (`voice_rate`), a skip
+  ahead (`voice_skip`) and a fallback to per-sentence clips (`voice_fallback`), so
+  a glitch heard in the service can be matched to its cause.
+
+### Fixed
+- **The room's voice no longer loses audio when its buffer fills.** If the
+  browser's audio buffer reported itself full, the page freed space but dropped
+  the slice that bounced and the next one too: a hole mid-sentence. It now retries
+  the same slice once the space is freed; only if nothing can be freed is a slice
+  let go, and the log says so.
+- **No more clicks and dropouts between sentences of the ElevenLabs stream voice
+  (v4, v4 Turbo) on the website's Listen.** The continuous voice was cut into
+  sentence clips wherever the network cut its audio, often in the middle of an mp3
+  frame. The room's player plays them as one stream, so it didn't matter there;
+  but the website plays each sentence as its own clip, and so does the room after
+  a fallback to per-sentence clips, and each clip then lost about 50 ms at its
+  edges. Clips are now cut on whole frames: the stream is byte for byte the same,
+  and a clip played alone loses nothing.
+- **The website's Listen on iPhone: no more slight repeats between sentences, and it
+  keeps going with the screen locked.** Three changes:
+  - A segment's sentence clips are sent to the website as plain audio frames.
+    Each sentence used to arrive as a complete mp3 with its own ID3 tag and a
+    header giving that sentence's length; joined, the first header claimed the
+    whole segment was one sentence long, and iPhone Safari, which trusts it, could
+    seek back and repeat.
+  - The website plays through two audio elements in turn, the next clip already
+    loading while one plays, instead of swapping the source of the one that just
+    ended, where iPhone Safari is least reliable.
+  - While Listen is on, the website keeps fetching new captions when the page is
+    hidden (screen locked, another app in front); it used to stop, so the voice
+    ran out after the clips already queued.
+
+  The website part ships in `web-captions.zip`: upload it to your host after the
+  release.
+
 ## [v2.21.1] — 2026-11-15
 
 ### Fixed

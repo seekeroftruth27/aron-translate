@@ -104,35 +104,68 @@ let listening = false;
 let audioSeen = false;      // has this service produced any audio at all?
 const heard = new Set();    // segment ids already queued/played
 const clipQ = [];           // pending clip URLs, in order
-let player = null;          // the single reused <audio>
+// Two <audio> elements taking turns: while one plays, the next clip is already
+// loading in the other, and at 'ended' the other just starts. Swapping the src of
+// the element that has just finished (the old way) is where iPhone Safari is
+// least reliable: a stray bit of the old clip, or a next clip that never starts.
+const decks = [];           // [{el, url}] x2, made inside the Listen tap
+let cur = 0;                // the deck playing (or last played)
 let playing = false;
 
 function clipURL(id){ return 'clips/' + epoch + '/' + encodeURIComponent(id) + '.mp3'; }
-function ensurePlayer(){
-  if(player) return player;
-  player = new Audio();
-  const next = () => { playing = false; pumpAudio(); };
-  player.addEventListener('ended', next);
-  player.addEventListener('error', next);   // a missing/partial clip: skip, keep going
-  return player;
+// A few frames of silent mp3, played once on each deck inside the tap so iOS
+// treats both as started by the viewer.
+function silentURL(){
+  const f = new Uint8Array(104); f.set([0xFF, 0xFB, 0x10, 0x00]);   // 32 kb/s, 44.1 kHz, silence
+  const all = new Uint8Array(f.length * 8);
+  for(let i = 0; i < 8; i++) all.set(f, i * f.length);
+  return URL.createObjectURL(new Blob([all], {type:'audio/mpeg'}));
+}
+function ensureDecks(){
+  if(decks.length) return;
+  const quiet = silentURL();
+  for(let i = 0; i < 2; i++){
+    const el = new Audio(); el.preload = 'auto';
+    const d = {el, url:null};
+    const next = () => { if(decks[cur] === d){ playing = false; pumpAudio(); } };
+    el.addEventListener('ended', next);
+    el.addEventListener('error', next);   // a missing/partial clip: skip, keep going
+    el.src = quiet; el.play().then(() => el.pause()).catch(() => {});
+    decks.push(d);
+  }
+}
+// Load the next queued clip into the idle deck, ahead of time.
+function preload(){
+  if(!decks.length) return;
+  const d = decks[1 - cur];
+  if(d.url || !clipQ.length) return;
+  d.url = clipQ.shift();
+  d.el.src = d.url; d.el.load();
 }
 function pumpAudio(){
-  if(playing || !listening) return;
-  const url = clipQ.shift();
-  if(!url) return;
-  playing = true;
-  ensurePlayer().src = url;
-  player.play().catch(() => { playing = false; });   // gesture lost — stay silent
+  if(playing || !listening || !decks.length) return;
+  preload();
+  const d = decks[1 - cur];
+  if(!d.url) return;                     // nothing queued yet
+  const done = decks[cur];
+  done.url = null;
+  cur = 1 - cur; playing = true;
+  d.el.currentTime = 0;
+  d.el.play().catch(e => {                // gesture lost: stay silent; a bad clip: skip it
+    playing = false;
+    if(!e || e.name !== 'NotAllowedError') setTimeout(pumpAudio, 0);
+  });
+  preload();                             // the one after, into the deck just freed
 }
 function queueClip(id){
   if(heard.has(id)) return;
   heard.add(id);
   clipQ.push(clipURL(id));
-  pumpAudio();
+  if(playing) preload(); else pumpAudio();
 }
 function stopAudio(){
   clipQ.length = 0; playing = false;
-  if(player){ try{ player.pause(); }catch(e){} player.removeAttribute('src'); }
+  for(const d of decks){ try{ d.el.pause(); }catch(e){} d.el.removeAttribute('src'); d.url = null; }
 }
 // Per segment, every render: reveal Listen once a service has any audio, and
 // (while listening) queue each finished clip we haven't heard yet.
@@ -150,7 +183,7 @@ listenBtn.addEventListener('click', () => {
     // Join live: mark everything already on screen as heard, prime the element
     // inside this tap so the browser unlocks audio, then play only what's next.
     for(const [id, s] of segs){ if(s.audio && s.done) heard.add(id); }
-    ensurePlayer();
+    ensureDecks();
   }else{
     stopAudio();
   }
@@ -212,9 +245,11 @@ async function poll(){
   }
 }
 // Pause polling while the tab is hidden (phone locked / app backgrounded); resume
-// immediately when it returns so the reader is never looking at stale text.
+// immediately when it returns so the reader is never looking at stale text. Not
+// while listening: someone listening with the screen locked needs the next clips,
+// or the voice runs out and stops.
 document.addEventListener('visibilitychange', () => {
-  if(document.hidden){ clearTimeout(timer); }
+  if(document.hidden){ if(!listening) clearTimeout(timer); }
   else if(!document.hidden){ clearTimeout(timer); poll(); }
 });
 poll();

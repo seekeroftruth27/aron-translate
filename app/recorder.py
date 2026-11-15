@@ -107,6 +107,89 @@ def mp3_duration(data):
     return round(total, 3)
 
 
+def _first_frame(data):
+    """(header bytes, frame seconds, frame bytes, side-info bytes) of the first
+    Layer III frame in `data`, or None. The voice track builds its silence from it,
+    so the gaps match the clips' own sample rate, bitrate and channels."""
+    n = len(data)
+    i = _id3_len(data)
+    while i + 4 <= n:
+        if data[i] != 0xFF or (data[i + 1] & 0xE0) != 0xE0:
+            i += 1
+            continue
+        h1, h2, h3 = data[i + 1], data[i + 2], data[i + 3]
+        ver, layer = (h1 >> 3) & 0x03, (h1 >> 1) & 0x03
+        br_i, sr_i = (h2 >> 4) & 0x0F, (h2 >> 2) & 0x03
+        if ver == 1 or layer != 1 or sr_i == 3 or br_i in (0, 15):
+            i += 1
+            continue
+        rate = _RATES[ver][sr_i]
+        kbps = (_V1_L3 if ver == 3 else _V2_L3)[br_i]
+        samples = 1152 if ver == 3 else 576
+        length = (samples // 8) * kbps * 1000 // rate          # padding off
+        mono = (h3 >> 6) & 0x03 == 3
+        side = (17 if mono else 32) if ver == 3 else (9 if mono else 17)
+        # no CRC (protection bit set), no padding; the rest of the header as found
+        header = bytes((0xFF, h1 | 0x01, h2 & 0xFD, h3))
+        return header, samples / rate, length, side
+    return None
+
+
+def silence(frame, seconds):
+    """`seconds` of digital silence as mp3 frames shaped like `frame` (see
+    _first_frame): a header, then side information and audio data all zero, which
+    every decoder plays as silence. Rounded to whole frames (~26 ms at 44.1 kHz)."""
+    header, fsec, length, _side = frame
+    count = max(0, int(round(seconds / fsec)))
+    one = header + bytes(length - len(header))
+    return one * count, count * fsec
+
+
+def _info_frame(data, i):
+    """Is the frame at data[i] a Xing/Info/VBRI header (an encoder's note of the
+    file's length and seek table, carrying no audio)?"""
+    h1, h3 = data[i + 1], data[i + 3]
+    ver, mono, crc = (h1 >> 3) & 0x03, (h3 >> 6) & 0x03 == 3, not (h1 & 0x01)
+    side = (17 if mono else 32) if ver == 3 else (9 if mono else 17)
+    o = i + 4 + (2 if crc else 0) + side
+    return data[o:o + 4] in (b"Xing", b"Info") or data[i + 36:i + 40] == b"VBRI"
+
+
+def bare_frames(data):
+    """`data` as audio frames only: ID3 tags, Xing/Info/VBRI header frames and stray
+    bytes taken out. A clip of one sentence is a complete mp3 whose header frame
+    gives ITS length; joined to other sentences, that header sits at the start of a
+    longer file and states the wrong length, and a player that trusts it (iPhone
+    Safari does, for duration and seeking) can end early or seek back and repeat.
+    Plain frames make no such claim, so players count them instead."""
+    out, i, n = [], 0, len(data)
+    while i + 4 <= n:
+        if data[i:i + 3] == b"ID3" and i + 10 <= n:
+            size = 0
+            for b in data[i + 6:i + 10]:
+                size = (size << 7) | (b & 0x7F)
+            i += 10 + size
+            continue
+        if data[i] != 0xFF or (data[i + 1] & 0xE0) != 0xE0:
+            i += 1
+            continue
+        h1, h2 = data[i + 1], data[i + 2]
+        ver, layer = (h1 >> 3) & 0x03, (h1 >> 1) & 0x03
+        br_i, sr_i, pad = (h2 >> 4) & 0x0F, (h2 >> 2) & 0x03, (h2 >> 1) & 0x01
+        if ver == 1 or layer != 1 or sr_i == 3 or br_i in (0, 15):
+            i += 1
+            continue
+        samples = 1152 if ver == 3 else 576
+        length = (samples // 8) * (_V1_L3 if ver == 3 else _V2_L3)[br_i] * 1000 // _RATES[ver][sr_i] + pad
+        if length <= 4:
+            i += 1
+            continue
+        if not _info_frame(data, i):
+            out.append(data[i:i + length])
+        i += length
+    return b"".join(out)
+
+
 # ---- the buffer -------------------------------------------------------------
 
 def _env_flag(name, default=True):
@@ -269,6 +352,32 @@ class Recording:
                        "src": "source line it came from", "lang": "target language"},
             "segments": clips,
         }, ensure_ascii=False, indent=1)
+
+    def voice_track(self, start, keep=None):
+        """The voice as it was heard, on the stream's timeline: one mp3 from `start`
+        (epoch seconds, the video's 0:00), each clip placed when it was voiced
+        (`wall`) with silence in between, so it can be uploaded to the replay as
+        an extra audio language. A clip voiced while the one before it was still
+        playing follows it, as it did in the room. `keep(clip)` picks which clips
+        (one language of a bilingual service). Returns (mp3 bytes, clips placed)."""
+        clips, blobs, _ = self._snapshot()
+        out, pos, placed = [], 0.0, 0
+        for c, blob in sorted(zip(clips, blobs), key=lambda cb: cb[0]["wall"]):
+            if c["wall"] < start or (keep and not keep(c)):
+                continue
+            frame = _first_frame(blob)
+            if frame is None:
+                continue
+            gap = c["wall"] - start - pos
+            if gap > 0:
+                pad, secs = silence(frame, gap)
+                out.append(pad)
+                pos += secs
+            audio = bare_frames(blob) or blob   # no tag or length header mid-track
+            out.append(audio)
+            pos += mp3_duration(audio)          # what was appended, so nothing drifts
+            placed += 1
+        return b"".join(out), placed
 
     def srt(self, clips=None):
         clips = self._clips if clips is None else clips

@@ -249,6 +249,9 @@
   select { height:40px; padding:0 10px; border-radius:9px; border:1px solid var(--border); background:var(--bg-input);
            color:var(--text); font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   input[type=range] { accent-color:var(--gold-bg); }
+  .ytrow { display:flex; gap:6px; align-items:center; flex:none; }
+  .ytrow input[type=time] { height:36px; padding:0 8px; border-radius:9px; border:1px solid var(--border);
+           background:var(--bg-input); color:var(--text); font-size:14px; font-variant-numeric:tabular-nums; }
   .help { margin:3px 0 0; font-size:12.5px; line-height:1.45; color:var(--text-2); font-weight:400; }
   .exp { margin-left:8px; font-size:11px; font-weight:600; letter-spacing:.04em; color:var(--gold);
          border:1px solid var(--gold-bg); border-radius:99px; padding:1px 8px; }
@@ -613,6 +616,8 @@
     </div>
     <label class="f hide" id="webWrap" title="Needs CT_PUBLISH_URL and CT_PUBLISH_TOKEN."><div>Web captions<p class="help">Stream to your website.</p></div>
       <input type="checkbox" class="sw" id="webStream"></label>
+    <div class="f" id="ytWrap" title="YouTube: with CT_YOUTUBE_CAPTION_URL set, each finished line is posted live as the stream's captions (Normal latency, with a 30-60 s broadcast delay). For the replay, download the lines as an .srt timed from when the stream started and upload it in YouTube Studio as an extra caption track."><div>YouTube captions<p class="help" id="ytHelp">Live captions and a replay .srt.</p></div>
+      <span class="ytrow"><input type="time" id="ytStart" step="1" aria-label="When the stream started"><button type="button" id="ytDl" class="btn sm" title="The captions for the replay, timed from when the stream started">.srt</button><button type="button" id="ytVoice" class="btn sm" title="The spoken translation for the replay, as one mp3 timed from when the stream started: an extra audio language in YouTube Studio">.mp3</button></span></div>
     <label class="f hide" id="ppWrap" title="Needs CT_PROPRESENTER_URL and CT_PROPRESENTER_MESSAGE."><div>ProPresenter<p class="help">Show captions in a ProPresenter message.</p></div>
       <input type="checkbox" class="sw" id="ppStream"></label>
     <label class="f" id="attWrap" title="The Attendant (Luke 4:20) names the Bible verse in focus: cited, alluded to, or being read. It shows it in a pill next to Ready: amber when it is in view, green while he reads it. It only detects; nothing is projected. Needs an Anthropic or OpenAI key."><div>Attendant<span class="exp">Experimental</span><p class="help" id="attHelp">Names the verse cited or read.</p></div>
@@ -1927,6 +1932,7 @@ function setListenUI(on){
   $('listenTxt').textContent=on?'Stop':'Start listening';
   listenBtn.title=(on?'Stop listening':'Start listening')+' (Space)';
   liveSince=on?Date.now():0;
+  if(on && !ytStartGuess) ytStartGuess=liveSince;
   $('onAir').classList.toggle('hide',!on); $('readyTag').classList.toggle('hide',on);
   // Stopped: the translator and voice lights go grey with Soniox's (a call still
   // in flight lights them again when it answers).
@@ -6047,11 +6053,13 @@ function webPublishing(){ return caps.publish && webStream.checked; }
 // hand edit of the line still carries them.
 const pubMeta={};
 function publishSeg(id,text,done,lang,src,t){
-  if(!webPublishing() || !text || wallDead(id)) return;
+  if(!text || wallDead(id)) return;
   const m=pubMeta[id]||(pubMeta[id]={});
   if(lang) m.lang=lang;
   if(src && !m.src) m.src=String(src).trim();
   if(t && !m.t) m.t=Math.round(t);
+  if(done) youtubeSeg(id,text,m);
+  if(!webPublishing()) return;
   fetch('/publish',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({id,text,done,...(m.lang?{lang:m.lang}:{}),...(m.src?{src:m.src}:{}),...(m.t?{t:m.t}:{})})})
     .then(r=>r.ok||r.json().then(d=>log('warn','web publish: '+(d.error||r.status))))
@@ -6072,6 +6080,47 @@ async function publishSegAudio(id,clips){
       {method:'POST',headers:{'Content-Type':AU.mime},body:mp3});
     if(!r.ok) r.json().then(d=>log('warn','web audio: '+(d.error||r.status))).catch(()=>{});
   }catch(e){ log('warn','web audio publish failed: '+e.message); }
+}
+// YouTube (CT_YOUTUBE_CAPTION_URL): every finalized line goes to the server, which
+// keeps those in the YouTube language for the replay .srt and posts each one live
+// once, stamped with when it was spoken. Always sent (it's local and cheap), so the
+// replay .srt works even without live posting.
+function youtubeSeg(id,text,m){
+  fetch('/youtube',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id,text,...(m.lang?{lang:m.lang}:{}),...(m.t?{t:m.t}:{})})}).catch(()=>{});
+}
+let ytStartGuess=0;   // when listening first started today: the default "stream started at"
+function ytStatus(){
+  fetch('/youtube').then(r=>r.json()).then(d=>{
+    const h=$('ytHelp'); if(!h) return;
+    h.textContent=(d.live
+        ? (d.err?'Live: YouTube refused the last caption ('+d.err+'). ':'Live: posting '+(d.lang||'').toUpperCase()+' captions ('+d.posted+' sent). ')
+        : 'Live posting is off (CT_YOUTUBE_CAPTION_URL). ')
+      +d.kept+' lines kept for the replay.';
+  }).catch(()=>{});
+}
+function ytDefaultStart(){
+  const el=$('ytStart'); if(!el || el.value) return;
+  const d=new Date(ytStartGuess||Date.now());
+  el.value=[d.getHours(),d.getMinutes(),d.getSeconds()].map(n=>String(n).padStart(2,'0')).join(':');
+}
+function ytDownload(what){
+  const v=($('ytStart').value||'').split(':').map(Number);
+  if(v.length<2 || v.some(isNaN)){ log('warn','YouTube '+what+': set when the stream started'); return; }
+  const d=new Date(); d.setHours(v[0],v[1],v[2]||0,0);
+  if(d.getTime()>Date.now()) d.setDate(d.getDate()-1);   // a time later than now: yesterday's stream
+  const url=(what==='.mp3'?'/youtube/voice.mp3':'/youtube/captions.srt')+'?start='+d.getTime();
+  if(what!=='.mp3'){ location.href=url; return; }
+  fetch(url,{method:'HEAD'}).then(r=>{   // say why instead of opening an error page
+    if(r.ok) location.href=url;
+    else log('warn','YouTube voice: '+(r.status===409?'nothing voiced since then (Speak off, or Rec cleared)':'HTTP '+r.status));
+  }).catch(e=>log('warn','YouTube voice failed: '+e.message));
+}
+if($('ytDl')){
+  $('ytDl').addEventListener('click',()=>ytDownload('.srt'));
+  $('ytVoice').addEventListener('click',()=>ytDownload('.mp3'));
+  $('ytWrap').addEventListener('focusin',()=>{ ytDefaultStart(); ytStatus(); });
+  $('ytWrap').addEventListener('mouseenter',()=>{ ytDefaultStart(); ytStatus(); });
 }
 function publishClear(){
   if(!caps.publish) return;   // clear the wall regardless of the box, if configured
@@ -6663,6 +6712,7 @@ const JITTER_S=0.35;
 // can't grow without bound.
 const KEEP_BEHIND_S=30;
 let curRate=1;
+let dryAt=0;   // when the voice ran dry mid-sentence (see initAudioOut), else 0
 const AU={el:null,ms:null,sb:null,q:[],started:false,broken:false,mime:'audio/mpeg'};
 
 function audioReady(){ return !!(AU.sb && AU.ms && AU.ms.readyState==='open' && !AU.broken); }
@@ -6703,6 +6753,22 @@ function initAudioOut(){
       }catch(e){ audioFallback('addSourceBuffer: '+e.message); }
     },{once:true});
     AU.el.addEventListener('error',()=>audioFallback('audio element error'));
+    // A glitch you can hear: the voice runs out of audio in the MIDDLE of a
+    // sentence (its batch is still streaming), so the speaker stops until more
+    // arrives. Running out between sentences, caught up with the speaker, is
+    // ordinary silence and isn't logged. Kept in the session record (log and
+    // a voice_dry event), so a service's glitches can be matched to their cause.
+    AU.el.addEventListener('waiting',()=>{
+      const slot=AUQ.held.get(AUQ.serving);
+      dryAt=(listening&&slot&&!slot.done&&slot.fed)?performance.now():0;
+    });
+    AU.el.addEventListener('playing',()=>{
+      if(!dryAt) return;
+      const s=(performance.now()-dryAt)/1000; dryAt=0;
+      if(s<0.15) return;
+      jEvent('voice_dry',{s:+s.toFixed(2)});
+      log('warn','voice ran dry mid-sentence for '+s.toFixed(1)+' s (waiting for ElevenLabs/Soniox audio)');
+    });
     applySink(AU.el);
   }catch(e){ audioFallback('MediaSource init: '+e.message); }
 }
@@ -6753,7 +6819,7 @@ function drainAudioTickets(){
   for(;;){
     const slot=AUQ.held.get(AUQ.serving);
     if(!slot) return;                    // nothing dispatched yet at this number
-    while(slot.slices.length){ const s=slot.slices.shift(); enqueueAudio(s[0],s[1],slot.el); }
+    while(slot.slices.length){ const s=slot.slices.shift(); slot.fed=true; enqueueAudio(s[0],s[1],slot.el); }
     if(!slot.done) return;               // still streaming -- hold the line
     AUQ.held.delete(AUQ.serving); AUQ.serving++;
   }
@@ -6846,7 +6912,14 @@ function pumpAppend(){
     if(item.el&&item.el!==lastSpanEl){ lastSpanEl=item.el; SPANS.push({t:at,el:item.el}); }
   }
   catch(e){
-    if(e.name==='QuotaExceededError'){ evictBehind(true); AU.q.shift(); }
+    // Buffer full: free what has been spoken and retry THIS slice once that removal
+    // ends (updateend pumps again). It used to drop it and the next one too, a hole
+    // mid-sentence. Only if nothing can be freed (all of it still unplayed) is the
+    // slice let go, so the queue can't pile up behind it.
+    if(e.name==='QuotaExceededError'){
+      if(evictBehind(true)) AU.q.unshift(item);
+      else log('warn','voice buffer full: dropped '+item.buf.length+' bytes of audio');
+    }
     else audioFallback('appendBuffer: '+e.message);
   }
 }
@@ -6858,18 +6931,24 @@ function maybeStart(){
 }
 // Trim what has already been spoken. `hard` is the QuotaExceeded path, which
 // must free space now rather than at the next tick.
-function evictBehind(hard){
-  if(!audioReady()||AU.sb.updating) return;
-  const b=AU.el.buffered; if(!b.length) return;
+function evictBehind(hard){   // true when a removal was started
+  if(!audioReady()||AU.sb.updating) return false;
+  const b=AU.el.buffered; if(!b.length) return false;
   const cut=AU.el.currentTime-(hard?5:KEEP_BEHIND_S);
-  if(cut<=b.start(0)+1) return;
-  try{ AU.sb.remove(b.start(0),cut); }catch(e){}
+  if(cut<=b.start(0)+1) return false;
+  try{ AU.sb.remove(b.start(0),cut); return true; }catch(e){ return false; }
 }
 function applyDrift(){
   if(!AU.el||fallbackMode){ reflectDrift(); return; }
   const d=audioDrift();
   const want=driftRate(d);
-  if(want!==curRate){ curRate=want; AU.el.playbackRate=want; AU.el.preservesPitch=true; }
+  if(want!==curRate){
+    // The speed-up is pitch-kept time-stretching, which can sound warbly; logged so a
+    // glitch at the same moment can be told apart from a dropout.
+    if(want>1||curRate>1) log('info','voice speed '+want+'× ('+d.toFixed(1)+' s behind)');
+    if(want>curRate) jEvent('voice_rate',{rate:want,behind:+d.toFixed(1)});
+    curRate=want; AU.el.playbackRate=want; AU.el.preservesPitch=true;
+  }
   if(d>DROP_AT){                       // hopeless backlog: jump toward live
     const to=Math.max(0,bufEnd()-DROP_TO);
     const skipped=to-AU.el.currentTime;
@@ -6877,6 +6956,7 @@ function applyDrift(){
       AU.el.currentTime=to;
       console.warn('TTS drift: skipped '+skipped.toFixed(1)+'s of queued audio');
       log('warn','TTS drift: skipped '+skipped.toFixed(1)+'s of queued audio');
+      jEvent('voice_skip',{s:+skipped.toFixed(1)});
     }
   }
   reflectDrift();
@@ -6888,6 +6968,7 @@ function audioFallback(why){
   if(fallbackMode&&AU.broken) return;
   AU.broken=true; fallbackMode=true;
   log('warn','streaming playback unavailable ('+why+'); using per-sentence clips');
+  jEvent('voice_fallback',{why:String(why).slice(0,120)});
   try{ if(AU.el) AU.el.pause(); }catch(e){}
 }
 // ---- fallback: reassemble each sentence and play it as its own clip ----------

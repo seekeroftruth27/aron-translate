@@ -394,3 +394,77 @@ class PrayerGate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def append_source():
+    """pumpAppend, maybeStart and evictBehind, cut from the real page."""
+    html = read("index.html")
+    a = html.index("function pumpAppend(){")
+    b = html.index("function applyDrift(){", a)
+    return html[a:b]
+
+
+APPEND_HARNESS = """
+(function(){
+  var appended = [], removed = [], logs = [], full = 0, buffered = [[0, 40]], t = 20;
+  var KEEP_BEHIND_S = 30, SPANS = [], lastSpanEl = null;
+  var AU = {q: [], started: true, broken: false,
+            el: {get currentTime(){ return t; },
+                 buffered: {get length(){ return buffered.length; },
+                            start: function(i){ return buffered[i][0]; },
+                            end: function(i){ return buffered[i][1]; }}},
+            sb: {updating: false,
+                 appendBuffer: function(b){
+                   if(full > 0){ full--; var e = new Error('full'); e.name = 'QuotaExceededError'; throw e; }
+                   appended.push(b.id);
+                 },
+                 remove: function(a, b){ removed.push([a, b]); buffered[0][0] = b; }}};
+  function audioReady(){ return true; }
+  function bufEnd(){ return buffered[0][1]; }
+  function audioFallback(w){ logs.push('fallback ' + w); }
+  function log(l, m){ logs.push(m); }
+  %SOURCE%
+  return {
+    push: function(id){ AU.q.push({buf: {id: id, length: 100}, el: null}); },
+    full: function(n){ full = n; },
+    at: function(s){ t = s; },
+    pump: function(){ pumpAppend(); },
+    state: function(){ return JSON.stringify({appended: appended, removed: removed, queued: AU.q.length, logs: logs}); }
+  };
+})()
+"""
+
+
+@need_js
+class AppendingVoice(unittest.TestCase):
+    """The room's voice: slices go into one MediaSource. When it reports itself full,
+    the slice that failed is retried after space is freed; nothing is skipped."""
+
+    def setUp(self):
+        self.js = MiniRacer()
+        self.js.eval("var v = " + APPEND_HARNESS.replace("%SOURCE%", append_source()))
+
+    def state(self):
+        return json.loads(self.js.eval("v.state()"))
+
+    def test_a_full_buffer_frees_space_and_retries_the_same_slice(self):
+        for i in (1, 2, 3):
+            self.js.eval("v.push(%d)" % i)
+        self.js.eval("v.full(1)")
+        self.js.eval("v.pump()")                  # slice 1 bounces: space is freed
+        st = self.state()
+        self.assertEqual(st["appended"], [])
+        self.assertEqual(st["removed"], [[0, 15]])  # everything up to 5 s behind the playhead
+        self.assertEqual(st["queued"], 3)           # nothing dropped
+        for _ in range(3):                          # each updateend pumps again
+            self.js.eval("v.pump()")
+        self.assertEqual(self.state()["appended"], [1, 2, 3])
+
+    def test_with_nothing_to_free_the_slice_is_let_go_and_said(self):
+        self.js.eval("v.at(3)")                     # the playhead near the start: nothing behind it
+        self.js.eval("v.push(1); v.push(2); v.full(1); v.pump()")
+        st = self.state()
+        self.assertEqual(st["queued"], 1)           # slice 1 let go, slice 2 still waiting
+        self.assertTrue(any("voice buffer full" in m for m in st["logs"]))
+        self.js.eval("v.pump()")
+        self.assertEqual(self.state()["appended"], [2])

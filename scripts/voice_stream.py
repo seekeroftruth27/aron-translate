@@ -49,6 +49,58 @@ STALL_S = 12           # a clip waiting this long for any audio has been lost
 _SENTENCE_END = re.compile(r"[.!?…][\"'’”)\]]?\s*$")
 
 
+# ---- whole mp3 frames ---------------------------------------------------------
+# The socket's audio chunks are cut wherever the network cut them, which can be in
+# the middle of an mp3 frame. Played as one stream (the room's MediaSource) that is
+# harmless; but a clip that starts or ends mid-frame, played on its own (the
+# website's Listen, the page's per-sentence fallback, a saved clip), makes the
+# decoder resync: a click or a dropped frame at every sentence. So each chunk is
+# routed only up to its last whole frame and the remainder waits for the next
+# chunk: every clip gets whole frames, and the stream's bytes stay the same, in the
+# same order. MPEG audio Layer III (what mp3_44100_128 is).
+_BR = {3: (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320),
+       2: (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160)}
+_SR = {3: (44100, 48000, 32000), 2: (22050, 24000, 16000), 0: (11025, 12000, 8000)}
+
+
+def _frame_len(b, i):
+    """Length of the Layer III frame whose header is at b[i], or 0 if none is."""
+    if i + 4 > len(b) or b[i] != 0xFF or (b[i + 1] & 0xE0) != 0xE0:
+        return 0
+    ver, layer = (b[i + 1] >> 3) & 3, (b[i + 1] >> 1) & 3
+    br, sr, pad = (b[i + 2] >> 4) & 15, (b[i + 2] >> 2) & 3, (b[i + 2] >> 1) & 1
+    if ver == 1 or layer != 1 or sr == 3 or br in (0, 15):
+        return 0
+    kbps = _BR[3 if ver == 3 else 2][br]
+    samples = 1152 if ver == 3 else 576
+    return (samples // 8) * kbps * 1000 // _SR[ver][sr] + pad
+
+
+def whole_frames(buf):
+    """(bytes up to the end of the last whole frame, the rest). Bytes that aren't a
+    frame header (a tag, junk) are passed on as they are, never held."""
+    i, n = 0, len(buf)
+    while i < n:
+        if buf[i:i + 3] == b"ID3" and i + 10 <= n:     # a tag: pass it whole, or wait
+            size = 0
+            for x in buf[i + 6:i + 10]:
+                size = (size << 7) | (x & 0x7F)
+            if i + 10 + size > n:
+                break
+            i += 10 + size
+            continue
+        ln = _frame_len(buf, i)
+        if ln:
+            if i + ln > n:
+                break                                  # a frame cut short: wait for the rest
+            i += ln
+        elif n - i < 4:
+            break                                      # too short to tell yet
+        else:
+            i += 1                                     # not a frame here: pass the byte on
+    return buf[:i], buf[i:]
+
+
 def can_stream(provider, model):
     return provider == "elevenlabs" and (model or "") in MODELS
 
@@ -117,6 +169,7 @@ class _Conn:
         self.unflushed = False
         self.idle_after = IDLE_FLUSH_S
         self.dead = None
+        self.carry = b""         # the start of a frame the next chunk completes
         threading.Thread(target=self._reader, daemon=True).start()
 
     def _send(self, msg):
@@ -180,13 +233,16 @@ class _Conn:
             c._close(why)
         self.clips = []
 
-    def _route(self, audio, nchars):
-        """Give one chunk to its clip; close clips the audio has moved past."""
+    def _route(self, audio, nchars, final=False):
+        """Give one chunk to its clip; close clips the audio has moved past. Only
+        whole frames are given (see whole_frames); the rest waits for the next
+        chunk, or goes as it is at the end of a turn (`final`)."""
         with self.lock:
+            audio, self.carry = (self.carry + audio, b"") if final else whole_frames(self.carry + audio)
             if nchars:
                 while self.clips and self.voiced >= self.clips[0].end:
                     self.clips.pop(0)._close()
-            if self.clips:
+            if self.clips and audio:
                 c = self.clips[0]
                 if not c.abandoned:
                     c._put(audio)
@@ -210,6 +266,8 @@ class _Conn:
                     al = msg.get("alignment") or {}
                     self._route(base64.b64decode(msg["audio"]), len(al.get("chars") or []))
                 if msg.get("is_final_audio_for_turn"):
+                    if self.carry:
+                        self._route(b"", 0, final=True)   # a turn's last bytes go to its clip
                     self._turn_done()
                 if msg.get("is_final"):
                     break

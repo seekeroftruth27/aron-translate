@@ -227,6 +227,20 @@ from synthesize import (synthesize_stream, synthesize_bytes, AUDIO_MIME,
 CT_PUBLISH_URL = (os.environ.get("CT_PUBLISH_URL") or "").strip()
 CT_PUBLISH_TOKEN = (os.environ.get("CT_PUBLISH_TOKEN") or "").strip()
 PUBLISH_CAPABLE = bool(CT_PUBLISH_URL and CT_PUBLISH_TOKEN)
+
+# YouTube live captions: each finalized caption in CT_YOUTUBE_LANG is POSTed to the
+# live stream's Captions Ingestion URL (YouTube Studio > Stream > Settings > Closed
+# captions, "Post captions to URL" / HTTP), stamped with when its words were spoken,
+# so YouTube lines it up with the video. YouTube takes one caption track per stream,
+# and its own live auto-captions are English-only, so for a Romanian service this is
+# the only live caption track. YouTube asks for Normal latency and a 30-60 s
+# broadcast delay, and an accurate clock. The same captions are kept for the replay:
+# GET /youtube/captions.srt?start=<epoch ms> times them from the stream's start.
+#   CT_YOUTUBE_CAPTION_URL  the signed ingestion URL (empty = no live posting)
+#   CT_YOUTUBE_LANG         the caption language to send (default en)
+CT_YOUTUBE_CAPTION_URL = (os.environ.get("CT_YOUTUBE_CAPTION_URL") or "").strip()
+CT_YOUTUBE_LANG = (os.environ.get("CT_YOUTUBE_LANG") or "en").strip().lower()
+YOUTUBE_CAPABLE = CT_YOUTUBE_CAPTION_URL.startswith(("http://", "https://"))
 # Spoken-audio companion to the caption relay: the browser sends each finalized
 # sentence's mp3, and we forward it to clip.php beside publish.php on the same
 # host, so phone viewers can hear the service live and past services archive with
@@ -649,7 +663,7 @@ import model_pins
 # HERE rather than in the browser: the mp3 bytes already exist on this side, and
 # a tab that is closed takes a browser-side buffer with it.
 sys.path.insert(0, HERE)
-from recorder import Recording
+from recorder import Recording, bare_frames
 
 RECORDING = Recording(mime=AUDIO_MIME)
 
@@ -2891,6 +2905,167 @@ def publish_ep():
     return jsonify(ok=True)
 
 
+# ---- YouTube live captions (CT_YOUTUBE_CAPTION_URL) ----------------------------
+# YouTube's HTTP caption format: POST text/plain to the ingestion URL plus &seq=N (N
+# rising with each request), the body a UTC timestamp line then the caption, e.g.
+#   2026-11-15T15:04:05.250
+#   And God said, Let there be light.
+# A caption posted live can't be changed, so each segment goes once, on its first
+# finalized version; later fixes still reach the replay log. Best-effort like the
+# website relay: posting runs on its own thread and a YouTube hiccup is only logged.
+_YT_LOCK = threading.Lock()
+_YT_LOG = {}                  # segment id -> {"t": epoch ms, "text": ...}, for the replay
+_YT_SENT = set()              # segment ids already posted live
+_YT_KEEP_MS = 12 * 3600 * 1000
+_YT_Q = queue.Queue(maxsize=500)
+_YT_STATE = {"posted": 0, "failed": 0, "err": "", "thread": None,
+             # seq rises across restarts too (seconds since 2026), so a restart mid-stream
+             # never sends a lower seq than before
+             "seq": int(time.time()) - 1767225600}
+
+
+def _yt_lang_ok(lang):
+    """Only captions in CT_YOUTUBE_LANG; a caption with no language is let through."""
+    lang = (lang or "").strip().lower().split("-")[0]
+    want = CT_YOUTUBE_LANG.split("-")[0]
+    return not lang or not want or lang == want
+
+
+def _yt_stamp(ms):
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(ms / 1000.0)) + ".%03d" % (int(ms) % 1000)
+
+
+def _yt_post(ms, text):
+    """One caption to YouTube. Returns (ok, error-or-None)."""
+    with _YT_LOCK:
+        _YT_STATE["seq"] += 1
+        seq = _YT_STATE["seq"]
+    url = CT_YOUTUBE_CAPTION_URL + ("&" if "?" in CT_YOUTUBE_CAPTION_URL else "?") + f"seq={seq}"
+    body = f"{_yt_stamp(ms)}\n{text}\n".encode("utf-8")
+    try:
+        r = _get_http_session().post(url, data=body, timeout=8,
+                                     headers={"Content-Type": "text/plain; charset=utf-8"})
+        if r.status_code != 200:
+            return False, f"YouTube HTTP {r.status_code}"
+        return True, None
+    except Exception as exc:
+        return False, str(exc)[:120]
+
+
+def _yt_worker():
+    while True:
+        ms, text = _YT_Q.get()
+        ok, err = _yt_post(ms, text)
+        with _YT_LOCK:
+            if ok:
+                _YT_STATE["posted"] += 1
+                _YT_STATE["err"] = ""
+            else:
+                _YT_STATE["failed"] += 1
+                if err != _YT_STATE["err"]:
+                    print(f"[youtube] ERROR: {err}", flush=True)
+                _YT_STATE["err"] = err
+
+
+def _yt_send(ms, text):
+    with _YT_LOCK:
+        if _YT_STATE["thread"] is None:
+            _YT_STATE["thread"] = threading.Thread(target=_yt_worker, daemon=True)
+            _YT_STATE["thread"].start()
+    try:
+        _YT_Q.put_nowait((ms, text))
+    except queue.Full:
+        pass
+
+
+@app.route("/youtube", methods=["GET", "POST"])
+def youtube_ep():
+    """POST {id, text, lang?, t?}: a finalized caption (t = when its first words were
+    spoken, epoch ms). Captions in CT_YOUTUBE_LANG are kept for the replay .srt and,
+    with CT_YOUTUBE_CAPTION_URL set, posted live once per segment. GET: the status."""
+    if request.method == "GET":
+        with _YT_LOCK:
+            return jsonify(live=YOUTUBE_CAPABLE, lang=CT_YOUTUBE_LANG, posted=_YT_STATE["posted"],
+                           failed=_YT_STATE["failed"], err=_YT_STATE["err"], kept=len(_YT_LOG))
+    data = request.get_json(silent=True) or {}
+    seg = str(data.get("id") or "")
+    text = " ".join(str(data.get("text") or "").split())[:500]
+    if not seg or not text:
+        return jsonify(error="missing id or text"), 400
+    if not _yt_lang_ok(data.get("lang")):
+        return jsonify(ok=True, skipped="lang")
+    now = int(time.time() * 1000)
+    try:
+        t = int(data.get("t") or 0)
+    except (TypeError, ValueError):
+        t = 0
+    if not 0 < now - t < 10 * 60 * 1000:     # no time, or nonsense: now
+        t = now
+    with _YT_LOCK:
+        if seg in _YT_LOG:
+            _YT_LOG[seg]["text"] = text       # a fix: the replay gets it, the live track can't
+        else:
+            _YT_LOG[seg] = {"t": t, "text": text}
+        for k in [k for k, v in _YT_LOG.items() if now - v["t"] > _YT_KEEP_MS]:
+            del _YT_LOG[k]
+        first = YOUTUBE_CAPABLE and seg not in _YT_SENT
+        if first:
+            _YT_SENT.add(seg)
+        t = _YT_LOG[seg]["t"]
+    if first:
+        _yt_send(t, text)
+    return jsonify(ok=True, live=first)
+
+
+@app.route("/youtube/voice.mp3")
+def youtube_voice_ep():
+    """The spoken translation in CT_YOUTUBE_LANG as one mp3 on the stream's
+    timeline, for the replay's extra audio language: ?start=<epoch ms> is when the
+    stream started. Built from the recording buffer (Rec), so it holds what was
+    voiced since that was last cleared."""
+    try:
+        start = int(request.args.get("start") or 0) / 1000.0
+    except ValueError:
+        return jsonify(error="start must be epoch ms"), 400
+    if not start:
+        return jsonify(error="start (epoch ms) is required"), 400
+    body, placed = RECORDING.voice_track(start, keep=lambda c: _yt_lang_ok(c.get("lang")))
+    if not placed:
+        return jsonify(error="no voice recorded since then"), 409
+    name = f"voice-{CT_YOUTUBE_LANG or 'translation'}.mp3"
+    return Response(body, mimetype=AUDIO_MIME, headers={
+        "Content-Disposition": f'attachment; filename="{name}"', "Content-Length": str(len(body))})
+
+
+def _srt_time(ms):
+    ms = max(0, int(ms))
+    return "%02d:%02d:%02d,%03d" % (ms // 3600000, ms // 60000 % 60, ms // 1000 % 60, ms % 1000)
+
+
+@app.route("/youtube/captions.srt")
+def youtube_srt_ep():
+    """The kept captions as subtitles for the stream's replay: ?start=<epoch ms> is
+    when the stream started (the video's 0:00); captions before it are left out.
+    Each shows until the next one, for at most 7 s."""
+    try:
+        start = int(request.args.get("start") or 0)
+    except ValueError:
+        return jsonify(error="start must be epoch ms"), 400
+    with _YT_LOCK:
+        rows = sorted((v["t"], v["text"]) for v in _YT_LOG.values() if v["t"] >= start)
+    if not start and rows:
+        start = rows[0][0]
+    out = []
+    for i, (t, text) in enumerate(rows):
+        nxt = rows[i + 1][0] if i + 1 < len(rows) else t + 7000
+        end = max(t + 1000, min(nxt, t + 7000))
+        out.append(f"{i + 1}\n{_srt_time(t - start)} --> {_srt_time(end - start)}\n{text}\n")
+    body = "\n".join(out)
+    name = f"captions-{CT_YOUTUBE_LANG or 'translation'}.srt"
+    return Response(body, mimetype="application/x-subrip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
 @app.route("/publish-audio", methods=["POST"])
 def publish_audio_ep():
     """Forward one finalized sentence's spoken mp3 to the external relay (clip.php).
@@ -2913,6 +3088,9 @@ def publish_audio_ep():
         return jsonify(error="no audio"), 400
     if len(audio) > CT_PUBLISH_CLIP_MAX:
         return jsonify(error="clip too large"), 413
+    # The page joins the segment's sentence clips into one mp3; each may be a complete
+    # file with its own ID3 tag and length header. Send plain frames (bare_frames).
+    audio = bare_frames(audio) or audio
     payload = {"id": seg_id, "audio_b64": base64.b64encode(audio).decode("ascii")}
     _relay_submit(CT_PUBLISH_CLIP_URL, payload, "publish-audio", 15)   # background worker
     return jsonify(ok=True)
@@ -4232,6 +4410,8 @@ def caps_ep():
         ears=([{"name": n, "label": l} for n, l in extra_ears.available()]   # extra ears beside Soniox
               if EARS_ENABLED else []),                                      # (off unless CT_EARS=1)
         publish=PUBLISH_CAPABLE,     # external caption relay (/publish) configured
+        youtube=YOUTUBE_CAPABLE,     # live captions posted to YouTube (CT_YOUTUBE_CAPTION_URL)
+        youtube_lang=CT_YOUTUBE_LANG,  # ...in this language, which the replay .srt also keeps
         propresenter=PROJECT_CAPABLE, # ProPresenter message projection (/project) configured
         propresenter_follow_mic=PROJECT_CAPABLE and CT_PROPRESENTER_FOLLOW_MIC, # the Message is shown/cleared with the Mic, no text
         propresenter_look=PROJECT_CAPABLE and CT_PROPRESENTER_FOLLOW_MIC and bool(CT_PROPRESENTER_LOOK), # ...only on that Look (/project/look)
