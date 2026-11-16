@@ -1,5 +1,21 @@
 # Changelog
 
+## [v2.23.0] — 2026-11-16
+
+### Changed
+- **The Mic button is Auto or Manual, and says which.** With Gate music or Gate
+  prayer on, a chip beside the Mic reads **Auto** (the Gates move it) or **Manual**
+  (you do). A click on the Mic, or key 1/2, sets it and goes Manual; it stays
+  exactly as you left it until you tap **Auto** (or press 3). This replaces the
+  pin of v2.21.1, which let go by itself once the Gates heard the same thing: it
+  stopped an unmute from being muted again mid-song, but nobody could tell from the
+  button when it would let go. Back on Auto, the Gates act on what they hear: a mute
+  you placed becomes Gate music's, to end when it hears speech (with only Gate
+  prayer on, Auto unmutes it, since nothing else would). If music or communal
+  prayer is heard while the Mic is on and Manual, the chip pulses so the next song
+  isn't let through. Each listening session starts on Auto. The session record
+  notes each switch (`manual`, `auto`). The underline marks on the Mic are gone.
+
 ## [v2.22.0] — 2026-11-15
 
 ### Added

@@ -140,11 +140,13 @@
   #modeInd .g-off, #modeInd[aria-pressed="true"] .g-on { display:none; }
   #modeInd[aria-pressed="true"] .g-off { display:block; }
   #modeInd[aria-pressed="true"] { background:var(--warn-soft); border-color:var(--warn); color:var(--warn); }
-  /* Dotted underline = moved on its own and may move again (Gate music drives
-     it), the same mark the language button uses for Auto. */
-  #modeInd.auto .mt { text-decoration:underline dotted; text-underline-offset:4px; }
-  /* Solid = pinned by the operator: no detector moves it until it agrees. */
-  #modeInd.auto.pinned .mt { text-decoration-style:solid; }
+  /* Whose the Mic is, beside it: Auto (the Gates') quiet, Manual (yours) marked;
+     pulsing when Manual lets music or prayer through. */
+  #micAuto { min-width:5.6em; padding:0 10px; font-size:12.5px; color:var(--text-2); }
+  #micAuto.manual { color:var(--warn); border-color:var(--warn); }
+  #micAuto.nudge { animation:micNudge 1.2s ease-in-out infinite; }
+  @keyframes micNudge { 50% { background:var(--warn-soft); } }
+  @media (prefers-reduced-motion:reduce){ #micAuto.nudge { animation:none; background:var(--warn-soft); } }
   #speakBtn .g-on, #speakBtn[aria-pressed="true"] .g-off { display:none; }
   #speakBtn[aria-pressed="true"] .g-on { display:block; }
   #speakBtn[aria-pressed="false"] { color:var(--text-2); }
@@ -156,7 +158,7 @@
   .langctl { display:flex; gap:6px; align-items:center; position:relative; }
   #langBtn .cur { color:var(--text); }
   /* Auto owns the direction: mark it as observed rather than set, the same way
-     #modeInd.auto marks a detector-driven mute. */
+     the Mic's Auto chip marks the Gates'. */
   #langBtn.autodir .cur { text-decoration:underline dotted; text-underline-offset:4px; }
   .langmenu { position:absolute; top:calc(100% + 8px); left:0; z-index:40; background:var(--bg-panel);
               border:1px solid var(--border); border-radius:14px; padding:8px; width:21rem; max-width:calc(100vw - 2rem);
@@ -486,6 +488,7 @@
     </div>
     <span class="vsep"></span>
     <button id="modeInd" class="btn tgl" type="button" aria-pressed="false"><svg class="i g-on" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11.5" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg><svg class="i g-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 9.4V6a3 3 0 0 0-5.7-1.3M9 9v2.5a3 3 0 0 0 4.9 2.3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 10.8 4.9M18.4 13.2c.1-.6.1-1.1.1-1.7M12 18v3M4 4l16 16"/></svg><span class="mt">Mic on</span></button>
+    <button id="micAuto" class="btn chip" type="button" aria-pressed="true" hidden>Auto</button>
     <button id="speakBtn" class="btn tgl hide" type="button" aria-pressed="false"><svg class="i g-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.2L12 5.5v13l-4.8-4H4z"/><path d="M15.8 9.2a4 4 0 0 1 0 5.6M18.4 6.6a7.6 7.6 0 0 1 0 10.8"/></svg><svg class="i g-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.2L12 5.5v13l-4.8-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg><span class="mt">Speak off</span></button>
     <input type="checkbox" id="tts" hidden>
     <div class="end">
@@ -776,7 +779,7 @@ const gainV=$('gainV'), paceV=$('paceV');
 // the values that tested best (see git history for the old knob defaults).
 const SPEECH_THRESHOLD=0.30, REDEMPTION_MS=500;
 const langBtn=$('langBtn'), langMenu=$('langMenu'), swapBtn=$('swapBtn'), autoBtn=$('autoBtn');
-const modeInd=$('modeInd'), autoModeBox=$('autoMode'), autoPrayerBox=$('autoPrayer'), hearChip=$('hearChip');
+const modeInd=$('modeInd'), micAutoBtn=$('micAuto'), autoModeBox=$('autoMode'), autoPrayerBox=$('autoPrayer'), hearChip=$('hearChip');
 // Stream, Expression, Stability and Tighten pauses are set in .env (CT_EL_STREAM,
 // CT_EL_EXPRESSION, CT_EL_STABILITY, CT_SX_TIGHTEN); /caps reports them. Eleven
 // v4 and v4 Turbo take no other knob, so Speed is Soniox's alone.
@@ -1951,10 +1954,11 @@ document.addEventListener('keydown',e=>{
   else if(e.key==='h'||e.key==='H'){ downloadTranscriptHtml(); }
   else if(e.key==='a'||e.key==='A'){ downloadRecording('zip'); }
   else if(e.key==='w'||e.key==='W'){ clearWall(); }
-  // Service mode on 1/2. Digits rather than initials because the operator is
-  // reaching for these mid-service without looking.
+  // The Mic on 1/2, and 3 hands it back to the Gates (Auto). Digits rather than
+  // initials because the operator is reaching for these mid-service without looking.
   else if(e.key==='1'){ operatorMode('speaking','key'); }
   else if(e.key==='2'){ operatorMode('singing','key'); }
+  else if(e.key==='3'){ micToAuto(); }
 });
 
 // ---- the service's languages ----------------------------------------------
@@ -2126,8 +2130,7 @@ function renderLangUI(){
   langBtn.querySelector('.cur').textContent = !p
     ? '→ '+(LANG_NAMES[langs[0]]||langs[0]||'')
     : (LANG_NAMES[activeSrc]||activeSrc)+' → '+(LANG_NAMES[otherSide(activeSrc)]||'');
-  // Dotted underline = "this moved on its own and may move again", exactly as
-  // modeInd marks an auto-driven service mode.
+  // Dotted underline = "this moved on its own and may move again".
   langBtn.classList.toggle('autodir', !!p && autoFlip);
   langBtn.title = !p
     ? 'Translating everything into '+(LANG_NAMES[langs[0]]||langs[0])
@@ -2276,62 +2279,52 @@ let modeByDetector=false;   // false (operator), true (music detector) or 'praye
 // When the mode last moved, for any reason. The detectors treat this as an
 // anti-strobe guard: MD_GUARD_MS between one move and the next.
 let lastModeAt=0;
-// ---- the operator's pin ------------------------------------------------------
-// An operator's click (or key 1/2) while a Gate is on PINS the mode: no detector
-// moves it until every Gate that could argue AGREES with it, and then the pin lets
-// go by itself (2026-11-15). The click used to overrule a detector for MD_GUARD_MS
-// only, so unmuting for a pastor talking over the keyboard pad bought five seconds
-// before Gate music muted again -- and again, until the music stopped.
-//   Pinned on (unmuted): the Gates take over again once they hear speech too, so
-//     the next song still mutes by itself. Music under the whole sermon: it stays on.
-//   Pinned muted: Gate music takes the hold over once it hears the music too, and
-//     ends it with the song. A mute for anything else stays until the operator
-//     lifts it (Gate music used to lift any mute after 5 s of speech).
-// A pin needs a Gate that could move the mode: muted needs Gate music (the prayer
-// gate never touches an operator's mute), on needs either. With none it is dropped.
-// Agreement counts only audio heard AFTER the pin: the detectors' own timers and
-// windows reach back seconds, and a speech timer still running from the sermon
-// would "agree" with an unmute pressed as the song starts.
-let modePin=null;                           // null, or the mode the operator pinned
-let pinAgree={music:false,prayer:false};    // which detector has come round to it
-let pinGen=0;                               // bumped by every new pin: the detectors restart their count
+// ---- the operator's Auto / Manual -------------------------------------------
+// With a Gate on (Gate music, Gate prayer), the Mic is in one of two hands:
+//   AUTO    the Gates move it: a song or a praying room mutes it, speech unmutes it.
+//   MANUAL  only the operator does. A click on the Mic, or key 1/2, sets it AND
+//           takes it into Manual; it stays there until the Auto chip beside the
+//           Mic (or key 3) hands it back. One rule: touched it, it's yours until Auto.
+// This replaced a "pin" (2026-11-15) that let go by itself once the Gates heard the
+// same thing as the operator: it fixed the unmute that muted again during a song,
+// but nobody could tell from the button when it would let go (2026-11-16).
+// With no Gate on there is nothing to hand it to: no Manual, no chip.
+let micManual=false;
+function gatesOn(){ return autoMode||autoPrayer; }
 function operatorMode(m,why){
   if(!MODE_LABEL[m]) return;
-  const contested=m==='singing'?autoMode:(autoMode||autoPrayer);
-  if(contested && modePin!==m){
-    modePin=m; pinAgree={music:false,prayer:false}; pinGen++;
-    jEvent('pin',{mode:m});
-    log('info','Mic pinned '+(m==='speaking'?'on':'muted')+' by you — the Gates leave it until they hear '
-        +(m==='speaking'?'speech':'the music')+' too');
+  if(gatesOn() && !micManual){
+    micManual=true;
+    jEvent('manual',{mode:m});
+    log('info','Mic on Manual — the Gates leave it to you until you tap Auto');
   }
-  if(m===serviceMode){ renderModeUI(); return; }   // pressing 1 while on still pins it on
+  if(m===serviceMode){ renderModeUI(); return; }   // pressing 1 while on still takes it to Manual
   setServiceMode(m,why);
 }
-// One detector's reading against the pin: `agrees` when it would itself put the
-// mode where the operator did, `disagrees` when it would move it away.
-function pinHeard(who,agrees,disagrees){
-  if(!modePin) return;
-  if(agrees) pinAgree[who]=true; else if(disagrees) pinAgree[who]=false;
-  pinCheck();
-}
-function pinCheck(){
-  if(!modePin) return;
-  let why=null, adopt=false;
-  if(modePin==='singing'){
-    if(!autoMode) why='Gate music off';
-    else if(pinAgree.music){ why='Gate music hears the music too'; adopt=true; }
-  }else if(!autoMode && !autoPrayer) why='both Gates off';
-  else if((!autoMode||pinAgree.music) && (!autoPrayer||pinAgree.prayer)) why='speech heard';
-  if(!why) return;
-  const was=modePin;
-  modePin=null; pinAgree={music:false,prayer:false};
-  // The mute is Gate music's from here: it ends it when the song ends.
-  if(adopt && serviceMode==='singing') modeByDetector=true;
-  jEvent('pin',{mode:was,released:why});
-  log('info','Mic pin released ('+why+') — the Gates are in charge again');
+// The Auto chip, or key 3: the Gates take the Mic back, acting on what they hear now.
+function micToAuto(){
+  if(!micManual) return;
+  micManual=false;
+  jEvent('auto',{});
+  log('info','Mic back on Auto — '+[autoMode&&'Gate music',autoPrayer&&'Gate prayer'].filter(Boolean).join(' and ')+' move it');
+  if(serviceMode==='singing'){
+    // A mute the operator placed becomes Gate music's, to end when it hears speech.
+    // With Gate music off nothing could ever lift it, so Auto unmutes it at once.
+    if(autoMode) modeByDetector=true;
+    else { renderModeUI(); setServiceMode('speaking','back to Auto'); return; }
+  }
   renderModeUI();
 }
-// ---- end of the operator's pin ----
+function micToManual(){
+  if(micManual || !gatesOn()) return;
+  micManual=true;
+  jEvent('manual',{mode:serviceMode});
+  log('info','Mic on Manual — the Gates leave it to you until you tap Auto');
+  renderModeUI();
+}
+// A Gate switched on or off: with none left there is no Auto to return to.
+function gatesChanged(){ if(!gatesOn()) micManual=false; renderModeUI(); }
+// ---- end of the operator's Auto / Manual ----
 function translatingNow(){ return serviceMode==='speaking'; }
 // `fromDetector` marks a call that is a GUESS rather than an instruction. Those
 // are refused while Auto is off; an operator's click or keypress never is.
@@ -2340,7 +2333,7 @@ function translatingNow(){ return serviceMode==='speaking'; }
 function setServiceMode(m,why,fromDetector){
   if(!MODE_LABEL[m] || m===serviceMode) return;
   if(fromDetector && !(fromDetector==='prayer'?autoPrayer:autoMode)) return;
-  if(fromDetector && modePin) return;        // the operator's pin: theirs to move, not a guess's
+  if(fromDetector && micManual) return;      // Manual: the operator's to move, not a guess's
   serviceMode=m; lastModeAt=performance.now(); modeByDetector=fromDetector||false;
   jEvent('mode',{mode:m,...(why?{why}:{}),by:fromDetector==='prayer'?'prayer detector':fromDetector?'detector':'operator'});
   renderModeUI();
@@ -2398,21 +2391,25 @@ setInterval(()=>{
   ppFollowMic(listening && translatingNow());
 },1000);
 // The Mic button in the ribbon is the mode's face: Mic on = speaking, the whole
-// pipeline running; Muted = held (music), costing nothing. With a Gate on the
-// detector presses it (the dotted underline says so); a click pins it (solid).
+// pipeline running; Muted = held (music), costing nothing. Beside it, with a Gate
+// on, the chip says whose it is: Auto (the Gates') or Manual (the operator's).
 function renderModeUI(){
   const held=!translatingNow();
   modeInd.querySelector('.mt').textContent=held?'Muted':'Mic on';
   modeInd.setAttribute('aria-pressed',held?'true':'false');
-  modeInd.classList.toggle('auto',autoMode||autoPrayer);
-  modeInd.classList.toggle('pinned',!!modePin);
+  const gates=[autoMode&&'Gate music',autoPrayer&&'Gate prayer'].filter(Boolean).join(' and ');
   modeInd.title=(held
       ? 'Muted: the pipeline is held and costs nothing. Click to unmute (1).'
       : 'Mic on: the full pipeline is running. Click to mute it, e.g. for music (2).')
-    +(modePin==='speaking'?'\nPinned on by you: the Gates leave it on until they hear speech too, then take over again.'
-     :modePin==='singing'?'\nPinned muted by you: Gate music takes the mute over once it hears the music too, and ends it with the song. Otherwise it stays muted until you unmute.'
-     :(autoMode?'\nGate music is on: the music detector moves this; a click pins it until the detector agrees.':'')
-     +(autoPrayer?'\nGate prayer is on: the prayer detector moves this; a click pins it until the detector agrees.':''));
+    +(!gates?'':micManual?'\nManual: '+gates+' leave it to you. Tap Auto (3) to hand it back.'
+      :'\nAuto: '+gates+' move it. A click sets it yourself and switches to Manual.');
+  micAutoBtn.hidden=!gates;
+  micAutoBtn.textContent=micManual?'Manual':'Auto';
+  micAutoBtn.classList.toggle('manual',micManual);
+  micAutoBtn.setAttribute('aria-pressed',micManual?'false':'true');
+  micAutoBtn.title=micManual
+    ? 'Manual: you move the Mic; '+gates+' only watch. Tap to go back to Auto (3).'
+    : 'Auto: '+gates+' move the Mic. Tap to take it yourself (Manual).';
   autoModeBox.checked=autoMode; autoPrayerBox.checked=autoPrayer;
   renderLights();
 }
@@ -2428,14 +2425,22 @@ function renderHearChip(){
   const prayer=pg.score!=null && pg.score<PG_ON;
   if(listening && serviceMode==='singing' && modeByDetector===true){ label='Music'; holding=true; why='Gate music is muting the mic for music.'; }
   else if(listening && serviceMode==='prayer'){ label='Prayer'; holding=true; why='Gate prayer is muting the mic for communal prayer.'; }
-  else if(listening && music){ label='Music?'; why=modePin==='speaking'&&autoMode?'Music heard, but you pinned the mic on: Gate music takes over again once it hears speech.':autoMode?'Music heard: Gate music mutes the mic if it lasts.':'Music heard. Gate music is off, so the mic stays on.'; }
-  else if(listening && prayer){ label='Prayer?'; why=modePin==='speaking'&&autoPrayer?'Communal prayer heard, but you pinned the mic on: Gate prayer takes over again once it hears one voice.':autoPrayer?'Communal prayer heard: Gate prayer mutes the mic if it lasts.':'Communal prayer heard. Gate prayer is off, so the mic stays on.'; }
+  else if(listening && music){ label='Music?'; why=micManual&&autoMode?'Music heard. The Mic is on Manual, so Gate music leaves it: tap Auto to let it mute.':autoMode?'Music heard: Gate music mutes the mic if it lasts.':'Music heard. Gate music is off, so the mic stays on.'; }
+  else if(listening && prayer){ label='Prayer?'; why=micManual&&autoPrayer?'Communal prayer heard. The Mic is on Manual, so Gate prayer leaves it: tap Auto to let it mute.':autoPrayer?'Communal prayer heard: Gate prayer mutes the mic if it lasts.':'Communal prayer heard. Gate prayer is off, so the mic stays on.'; }
   else if(listening){ label='Speech'; why='Neither music nor communal prayer heard.'; }
   if(hearChip.textContent!==label) hearChip.textContent=label;
   hearChip.hidden=!label;
   hearChip.classList.toggle('holding',holding);
   hearChip.title=why;
+  // Manual with the Mic on while a Gate hears what it would mute for: the Auto chip
+  // pulses, so a Manual left on from the last song doesn't let the next one through.
+  const nudge=listening && micManual && translatingNow() && ((autoMode&&music)||(autoPrayer&&prayer&&!music));
+  if(nudge!==micAutoBtn.classList.contains('nudge')){
+    micAutoBtn.classList.toggle('nudge',nudge);
+    if(nudge) log('info','Mic is on Manual and '+(music?'music':'communal prayer')+' is playing — tap Auto to let the Gate mute it');
+  }
 }
+micAutoBtn.addEventListener('click',()=>{ micManual?micToAuto():micToManual(); micAutoBtn.blur(); });
 modeInd.addEventListener('click',()=>{
   operatorMode(translatingNow()?'singing':'speaking','operator');
   // Hand focus back to the document: the global keydown handler ignores events
@@ -2466,7 +2471,7 @@ autoModeBox.addEventListener('change',()=>{
     // reopen it. An operator's own hold is untouched.
     setServiceMode('speaking','gate music switched off');
   }
-  pinCheck();        // a pin no Gate can contest any more is dropped
+  gatesChanged();    // no Gate left: no Manual
 });
 autoPrayerBox.addEventListener('change',()=>{
   autoPrayer=autoPrayerBox.checked;
@@ -2479,7 +2484,7 @@ autoPrayerBox.addEventListener('change',()=>{
   // unwatched, and switching off releases a hold the detector placed.
   if(autoPrayer){ pg.onSince=0; pg.offN=0; lastModeAt=performance.now(); pgRenderDiag(); }
   else if(serviceMode==='prayer' && modeByDetector==='prayer') setServiceMode('speaking','gate prayer switched off');
-  pinCheck();
+  gatesChanged();
 });
 // ---- model names and health, for the header's lights ------------------------
 // Escapes for both text and ATTRIBUTE positions (hence the quotes) -- shared by
@@ -3771,7 +3776,7 @@ async function startSonioxStream(){
   lastSpeechAt=performance.now();
   resetDirection();
   mdReset();         // detector state is per-session; a stale window would decide the first seconds
-  pinAgree={music:false,prayer:false};   // a pin survives Stop/Start like the mode; last session's agreement does not
+  micManual=false;   // every listening session starts with the Gates in charge (Auto)
   sonioxSuspended=false;   // a new session always starts with the pipeline open
   prerollReset(false);     // last session's held audio is not this one's
   sonioxRetries=0;   // fresh retry budget for this listening session
@@ -3923,8 +3928,7 @@ function pgReset(){
   const band=[pgBiquad('hp',300,0.707),pgBiquad('hp',300,0.707),pgBiquad('lp',3400,0.707),pgBiquad('lp',3400,0.707)];
   const envLp=[pgBiquad('lp',20,0.707),pgBiquad('lp',20,0.707)];
   pg={band,envLp,raw:new Float32Array(PG_WIN),rw:0,filled:0,env:new Float32Array(PG_WIN/PG_ENV_DS),ew:0,
-      envN:0,acc:0,accN:0,since:0,hist:[],score:null,fast:null,feat:null,onSince:0,offN:0,levels:[],tops:[],clear:false,back:false,
-      pinGen:-1,pinN:0};
+      envN:0,acc:0,accN:0,since:0,hist:[],score:null,fast:null,feat:null,onSince:0,offN:0,levels:[],tops:[],clear:false,back:false};
 }
 pgReset();
 function pgFeed(frame,sampleRate){
@@ -4047,9 +4051,6 @@ const MD_OFF_FAST_N=4;
 // on either (validation/scripts/music_detect_stress.py --from-csv ... --sweep).
 const MD_FAST_ON_N=4, MD_FAST_ON_AT=0.8;
 const MD_GUARD_MS=5000;         // anti-strobe: the least time between two moves
-// Windows counted since the operator's pin (see "the operator's pin"): mdSeq counts
-// every informative window, mdPinFrom is where the current pin's count starts.
-let mdSeq=0, mdPinGen=-1, mdPinFrom=0;
 let yamSession=null, yamState='idle', yamBusy=false;
 let mdRing=new Float32Array(YAM_WIN), mdW=0, mdFilled=0, mdSinceRun=0;
 let mdAcc=0, mdAccN=0;
@@ -4075,7 +4076,6 @@ async function mdLoad(){
 function mdReset(){
   mdW=0; mdFilled=0; mdSinceRun=0; mdAcc=0; mdAccN=0;
   mdRaw=[]; mdScore=0; mdFeat=null; mdOnSince=0; mdOffSince=0;
-  mdPinGen=-1;       // a pin carried over Stop/Start counts afresh
   mdRenderDiag();
 }
 // Decimate to YAM_SR with a box filter. Crude as an anti-alias, but YAMNet reads
@@ -4119,7 +4119,7 @@ async function mdRun(){
     const informative=Math.max(m,s)>=YAM_MIN_CONF;
     const raw=informative ? m/(m+s) : null;
     if(informative){
-      mdRaw.push(raw); mdSeq++;
+      mdRaw.push(raw);
       while(mdRaw.length>MD_MEDIAN_N) mdRaw.shift();
       const sorted=mdRaw.slice().sort((a,b)=>a-b);
       mdScore=sorted[sorted.length>>1];             // median
@@ -4136,17 +4136,7 @@ function mdDecide(now){
   if(mdScore>=MD_ON){ mdOffSince=0; if(!mdOnSince) mdOnSince=now; }
   if(mdScore<=MD_OFF){ mdOnSince=0; if(!mdOffSince) mdOffSince=now; }
   mdRenderDiag();
-  // Pinned by the operator: not ours to move, only to agree with. The same rules
-  // that would have moved it, read over the windows heard since the pin only (the
-  // fast rules, or the median of at least 5). No guard: agreeing moves nothing.
-  if(modePin){
-    if(mdPinGen!==pinGen){ mdPinGen=pinGen; mdPinFrom=mdSeq; }
-    const n=Math.min(mdSeq-mdPinFrom,mdRaw.length), post=n?mdRaw.slice(-n):[];
-    const med=n>=5?post.slice().sort((a,b)=>a-b)[n>>1]:null;
-    const pMusic=(n>=MD_FAST_ON_N && post.slice(-MD_FAST_ON_N).every(v=>v>=MD_FAST_ON_AT)) || (med!=null && med>=MD_ON);
-    const pSpeech=(n>=MD_OFF_FAST_N && post.slice(-MD_OFF_FAST_N).every(v=>v<=MD_OFF)) || (med!=null && med<=MD_OFF);
-    return pinHeard('music',modePin==='singing'?pMusic:pSpeech,modePin==='singing'?pSpeech:pMusic);
-  }
+  if(micManual) return;                       // Manual: watch, don't move it
   if(now-lastModeAt<MD_GUARD_MS) return;
   const pct=Math.round(mdScore*100)+'%';
   const sure=mdRaw.length>=MD_FAST_ON_N && mdRaw.slice(-MD_FAST_ON_N).every(v=>v>=MD_FAST_ON_AT);
@@ -4175,16 +4165,7 @@ function pgDecide(now){
     setServiceMode('speaking',(pg.back?'speaker back':'prayer ended')+', score '+(pg.fast??0).toFixed(2),'prayer');
     return;
   }
-  // Pinned by the operator: agrees when one voice is back (its own release), read
-  // only from windows since the pin -- the fast score spans PG_FAST_N of them, and
-  // PG_OFF_N of those scores in a row, so that many windows first -- and disagrees
-  // when it would hold.
-  if(modePin){
-    if(pg.pinGen!==pinGen){ pg.pinGen=pinGen; pg.pinN=0; }
-    pg.pinN++;
-    return pinHeard('prayer',!!(pg.back || (pg.pinN>=PG_FAST_N+PG_OFF_N-1 && pg.offN>=PG_OFF_N)),
-                    !!(pg.onSince && now-pg.onSince>=PG_ON_MS && !musicHeard()));
-  }
+  if(micManual) return;                       // Manual: watch, don't move it
   if(now-lastModeAt<MD_GUARD_MS) return;
   if(serviceMode==='speaking' && pg.onSince && now-pg.onSince>=PG_ON_MS && !musicHeard())
     setServiceMode('prayer','communal prayer, score '+pg.score.toFixed(2),'prayer');
@@ -4194,7 +4175,7 @@ function pgRenderDiag(){
   const f=x=>x==null?' —  ':x.toFixed(2);
   diagPrayer.textContent='prayer detector  score '+f(pg.score)+' ('+PG_AVG_N+' s)  '+f(pg.fast)+' (3 s)   hold<'+PG_ON.toFixed(2)
     +' '+(PG_ON_MS/1000)+'s · release>'+PG_OFF.toFixed(2)+'   '
-    +(!autoPrayer?'gate off — observing only':modePin?'PINNED by you'+(pinAgree.prayer?' — agrees':''):'AUTO')+'\n'
+    +(!autoPrayer?'gate off — observing only':micManual?'MANUAL — observing only':'AUTO')+'\n'
     +'  depth '+f(pg.feat&&pg.feat.depth)+'  pitch '+f(pg.feat&&pg.feat.harm)+'   (one voice ~1.1 / 0.7; a praying room ~0.3 / 0.4)';
 }
 function mdRenderDiag(){
@@ -4209,7 +4190,7 @@ function mdRenderDiag(){
   diagMusic.textContent=
     'music score '+p(mdScore)+' (median of '+mdFeat.n+')   on≥'+p(MD_ON)+' '+(MD_ON_MS/1000)+'s'
       +' · off≤'+p(MD_OFF)+' '+(MD_OFF_MS/1000)+'s   '
-      +(!autoMode?'auto off — observing only':modePin?'PINNED by you'+(pinAgree.music?' — agrees':''):'AUTO')+'\n'
+      +(!autoMode?'auto off — observing only':micManual?'MANUAL — observing only':'AUTO')+'\n'
     +'  YAMNet music '+p(mdFeat.music)+'  speech '+p(mdFeat.speech)
       +'  this window '+(mdFeat.informative?p(mdFeat.raw):' — (too quiet to judge)')
       +'   '+mdFeat.ms.toFixed(0)+'ms/run';

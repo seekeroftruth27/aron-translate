@@ -232,10 +232,10 @@ def prayer_source():
 
 
 def pin_source():
-    """The operator's pin (operatorMode, pinHeard, pinCheck), cut from the real page."""
+    """The operator's Auto / Manual (operatorMode, micToAuto, ...), cut from the real page."""
     html = read("index.html")
-    a = html.index("// ---- the operator's pin")
-    return html[a:html.index("// ---- end of the operator's pin", a)]
+    a = html.index("// ---- the operator's Auto / Manual")
+    return html[a:html.index("// ---- end of the operator's Auto / Manual", a)]
 
 
 PRAYER_HARNESS = """
@@ -253,6 +253,7 @@ PRAYER_HARNESS = """
   function jEvent(){}
   function setServiceMode(m, why, by){
     if(m === serviceMode) return;
+    if(by && micManual) return;                 // as the page's: Manual refuses the detectors
     serviceMode = m; lastModeAt = now; modeByDetector = by || false; changes.push(m);
   }
   %PIN%
@@ -276,7 +277,8 @@ PRAYER_HARNESS = """
       return pg.feat !== null;
     },
     click: function(m, t){ now = t; operatorMode(m, 'operator'); },
-    pin: function(){ return modePin; },
+    manual: function(){ return micManual; },
+    auto: function(t){ now = t; micToAuto(); },
     mode: function(){ return serviceMode; },
     changes: function(){ return JSON.stringify(changes); }
   };
@@ -348,40 +350,26 @@ class PrayerGate(unittest.TestCase):
         self.decide(100000, back=True)
         self.assertEqual(self.mode(), "prayer")
 
-    # --- the operator's pin ------------------------------------------------
-    def test_an_unmute_during_a_prayer_hold_is_not_held_again(self):
+    # --- Auto / Manual ------------------------------------------------------
+    def test_an_unmute_during_a_prayer_hold_stays_on(self):
         """A click used to buy the 5 s guard; then the prayer gate held again."""
         self.held(at=100000)
         self.js.eval("gate.click('speaking', 100500)")
         self.assertEqual(self.mode(), "speaking")
+        self.assertTrue(self.js.eval("gate.manual()"))
         for t in range(101000, 131000, 1000):                    # 30 s more of the praying room
             self.decide(t)
         self.assertEqual(self.mode(), "speaking")
-        self.assertEqual(self.js.eval("gate.pin()"), "speaking")
 
-    def test_the_pin_lets_go_when_one_voice_is_back_and_the_next_prayer_holds(self):
+    def test_back_on_auto_the_next_prayer_holds(self):
         self.held(at=100000)
         self.js.eval("gate.click('speaking', 100500)")
-        self.decide(101000)
-        self.decide(102000)
-        self.decide(103000, offN=1, fast=1.3)
-        self.decide(104000, offN=2, fast=1.3)                    # two clear scores, all since the pin
-        self.assertIsNone(self.js.eval("gate.pin()"))
+        self.decide(101000, back=True)                            # one voice: still Manual
+        self.assertTrue(self.js.eval("gate.manual()"))
+        self.js.eval("gate.auto(102000)")
         self.decide(110000)                                       # a prayer, well past the guard
         self.decide(112000)
         self.assertEqual(self.mode(), "prayer")
-
-    def test_a_clear_score_from_before_the_pin_does_not_count(self):
-        """offN already at 2 when the operator pins it: not agreement yet."""
-        self.js.eval("gate.click('speaking', 100000)")
-        self.decide(101000, offN=2, fast=1.3)
-        self.assertEqual(self.js.eval("gate.pin()"), "speaking")
-
-    def test_a_speaker_coming_back_releases_the_pin_at_once(self):
-        self.held(at=100000)
-        self.js.eval("gate.click('speaking', 100500)")
-        self.decide(101000, back=True)
-        self.assertIsNone(self.js.eval("gate.pin()"))
 
     def test_the_floor_follows_the_feed(self):
         for amp in (0.3, 0.003):

@@ -34,11 +34,11 @@ def gate_source():
 
 
 def pin_source():
-    """The operator's pin (operatorMode, pinHeard, pinCheck), cut from the real page."""
+    """The operator's Auto / Manual (operatorMode, micToAuto, ...), cut from the real page."""
     with open(os.path.join(ROOT, "app", "index.html"), encoding="utf-8") as f:
         html = f.read()
-    a = html.index("// ---- the operator's pin")
-    return html[a:html.index("// ---- end of the operator's pin", a)]
+    a = html.index("// ---- the operator's Auto / Manual")
+    return html[a:html.index("// ---- end of the operator's Auto / Manual", a)]
 
 
 HARNESS = """
@@ -55,19 +55,21 @@ HARNESS = """
   var clock = 0;
   function setServiceMode(m, why, by){
     if(m === serviceMode) return;
+    if(by && micManual) return;                 // as the page's: Manual refuses the detectors
     serviceMode = m; lastModeAt = clock; modeByDetector = by || false; moves.push([clock, m, why]);
   }
   %PIN%
   %SOURCE%
   return {
     click: function(m, at){ clock = at; operatorMode(m, 'operator'); return serviceMode; },
-    gates: function(music, prayer){ autoMode = music; autoPrayer = prayer; pinCheck(); },
-    pin: function(){ return modePin; },
+    gates: function(music, prayer){ autoMode = music; autoPrayer = prayer; gatesChanged(); },
+    manual: function(){ return micManual; },
+    auto: function(at){ clock = at; micToAuto(); return serviceMode; },
     by: function(){ return modeByDetector; },
     window: function(raw, at){                  // the tail of mdRun, then the decision
       clock = at;
       if(raw !== null){
-        mdRaw.push(raw); mdSeq++;
+        mdRaw.push(raw);
         while(mdRaw.length > MD_MEDIAN_N) mdRaw.shift();
         var sorted = mdRaw.slice().sort(function(a, b){ return a - b; });
         mdScore = sorted[sorted.length >> 1];
@@ -171,86 +173,80 @@ class MusicGate(unittest.TestCase):
             self.assertEqual(self.feed(0.02), "singing")
         self.assertEqual(self.seconds_to("speaking", 0.02), 1.0)    # the guard ends at 5 s
 
-    # --- the operator's pin --------------------------------------------------
+    # --- Auto / Manual ------------------------------------------------------
     def click(self, mode):
         self.at += HOP_MS
         return self.js.eval("gate.click(%s, %d)" % (json.dumps(mode), self.at))
 
-    def pin(self):
-        return self.js.eval("gate.pin()")
+    def manual(self):
+        return self.js.eval("gate.manual()")
+
+    def auto(self):
+        self.at += HOP_MS
+        return self.js.eval("gate.auto(%d)" % self.at)
 
     def mode(self):
         return self.js.eval("gate.mode()")
 
-    def test_an_unmute_during_a_song_is_not_muted_again(self):
+    def test_a_click_goes_manual_and_an_unmute_in_a_song_stays_on(self):
         """It used to last the 5 s guard, then Gate music muted again, and again."""
         self.in_song()
+        self.assertFalse(self.manual())
         self.assertEqual(self.click("speaking"), "speaking")
-        self.assertEqual(self.pin(), "speaking")
+        self.assertTrue(self.manual())
         self.assertEqual(self.feed(*[0.95] * 60), "speaking")      # 30 s more of the song
-        self.assertEqual(self.pin(), "speaking")
 
-    def test_the_pin_lets_go_on_speech_and_the_next_song_mutes(self):
+    def test_manual_stays_manual_until_auto(self):
+        """No letting go by itself: speech, then the next song, and the Mic stays put."""
         self.in_song()
         self.click("speaking")
-        self.feed(*[0.95] * 20)
-        self.feed(*[0.02] * 12)                                     # the pastor, alone
-        self.assertIsNone(self.pin())
-        self.assertEqual(self.mode(), "speaking")
-        took = self.seconds_to("singing", 0.95)                     # the next song
+        self.feed(*[0.02] * 20)                                     # the pastor, alone
+        self.assertTrue(self.manual())
+        self.assertEqual(self.feed(*[0.95] * 20), "speaking")      # the next song: still on
+        self.auto()
+        self.assertFalse(self.manual())
+        took = self.seconds_to("singing", 0.95)                     # Auto: Gate music mutes it
         self.assertIsNotNone(took)
-        self.assertLessEqual(took, 2.5)
+        self.assertLessEqual(took, 1.0)                             # it has heard the song already
 
-    def test_unmuting_as_a_song_starts_holds_too(self):
-        """1 pressed while still on, before the detector mutes: it pins it on."""
-        self.song_from_speech()
-        self.feed(0.95, 0.95)
-        self.assertEqual(self.click("speaking"), "speaking")
-        self.assertEqual(self.feed(*[0.95] * 40), "speaking")
-
-    def test_a_mute_before_a_song_is_taken_over_and_ends_with_it(self):
-        self.song_from_speech()
-        self.assertEqual(self.click("singing"), "singing")
-        self.assertEqual(self.pin(), "singing")
-        self.feed(*[0.95] * 8)                                      # the band starts
-        self.assertIsNone(self.pin())
-        self.assertTrue(self.js.eval("gate.by()"))                  # Gate music's hold now
-        self.feed(*[0.95] * 12)
-        self.assertIsNotNone(self.seconds_to("speaking", 0.02, limit=5))    # the song ends
-
-    def test_a_mute_with_no_music_stays_muted(self):
+    def test_a_mute_by_you_stays_through_speech(self):
         """It used to be lifted after 5 s of speech."""
         self.song_from_speech()
-        self.click("singing")
+        self.assertEqual(self.click("singing"), "singing")
         self.assertEqual(self.feed(*[0.02] * 60), "singing")
-        self.assertEqual(self.pin(), "singing")
 
-    def test_no_pin_when_no_gate_could_move_it(self):
+    def test_auto_hands_your_mute_to_gate_music_and_speech_ends_it(self):
+        self.song_from_speech()
+        self.click("singing")
+        self.feed(*[0.95] * 20)                                     # the song you muted for
+        self.assertEqual(self.auto(), "singing")                    # Auto keeps it muted...
+        self.assertTrue(self.js.eval("gate.by()"))                  # ...as Gate music's hold
+        self.assertIsNotNone(self.seconds_to("speaking", 0.02, limit=5))   # the song ends
+
+    def test_no_manual_without_a_gate(self):
         self.js.eval("gate.gates(false, false)")
         self.click("singing")
-        self.assertIsNone(self.pin())
+        self.assertFalse(self.manual())
         self.click("speaking")
-        self.assertIsNone(self.pin())
+        self.assertFalse(self.manual())
 
-    def test_a_mute_is_not_pinned_by_gate_prayer_alone(self):
-        """Gate prayer never lifts an operator's mute, so there is nothing to pin against."""
+    def test_switching_the_gates_off_ends_manual(self):
+        self.in_song()
+        self.click("speaking")
+        self.js.eval("gate.gates(false, false)")
+        self.assertFalse(self.manual())
+
+    def test_auto_with_only_gate_prayer_unmutes_your_mute(self):
+        """Gate prayer never ends a mute, so on Auto nothing would: Auto lifts it."""
         self.js.eval("gate.gates(false, true)")
         self.click("singing")
-        self.assertIsNone(self.pin())
+        self.assertTrue(self.manual())
+        self.assertEqual(self.auto(), "speaking")
 
-    def test_switching_gate_music_off_drops_the_pin(self):
-        self.in_song()
-        self.click("speaking")
-        self.js.eval("gate.gates(false, false)")
-        self.assertIsNone(self.pin())
-
-    def test_an_unmute_waits_for_every_gate_that_is_on(self):
-        """Gate prayer on too: the music detector hearing speech is not enough."""
-        self.js.eval("gate.gates(true, true)")
-        self.in_song()
-        self.click("speaking")
-        self.feed(*[0.02] * 12)
-        self.assertEqual(self.pin(), "speaking")
+    def test_auto_when_already_auto_changes_nothing(self):
+        self.song_from_speech()
+        self.assertEqual(self.auto(), "speaking")
+        self.assertEqual(self.moves(), [])
 
     def test_the_thresholds_the_page_runs(self):
         """So a change to them has to change this test too."""
