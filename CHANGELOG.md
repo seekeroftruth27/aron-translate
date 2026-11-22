@@ -1,5 +1,182 @@
 # Changelog
 
+## [v2.24.0] — 2026-11-22
+
+### Added
+- **The Mic pulses when it is holding a speaker back.** Muted by hand (Manual, or with no
+  Gate on) and one voice has been speaking for about 3 s: the Mic button pulses and
+  the chip beside the level bar says why, until he stops or the Mic is unmuted (1).
+  It uses the prayer detector's one-voice test, which a sermon passes and a praying or
+  singing room does not. A mute a Gate placed is left alone, since it lifts by itself.
+  The counterpart of the Auto pulse for music or prayer heard with the Mic on by hand.
+- **The ElevenLabs voice reads clauses, not caption packets** (`CT_EL_VOICE_MODE=clauses`,
+  the new default for v4 and v4 Turbo). Captions are cut for reading, about five words
+  wherever the preacher pauses; the voice is now cut for speaking. Every caption's words go
+  into one buffer and the voice is given clips that end at full stops, and at a comma (once
+  five words are waiting) only while the room's voice is about to run dry: while it still
+  has speech queued it waits for the full stop, so it wins back quality exactly when it is
+  lagging anyway. Each clip is one request stitched to the three before it, so the reading
+  carries on across them. The page plays each clip a steady 6 s after the preacher began
+  saying it (`CT_VOICE_DELAY_S`), so the voice pauses where he paused instead of wherever it
+  ran out of words, and reads a late clip 5% (10%) faster. Chosen in six blind rounds of
+  listening on the 29 March Palm Sunday sermon: caption packets read separately were rated
+  choppy (2 of 5), clauses 4, whole sentences with the settings below 5. It sits about
+  7 s behind the preacher, against about 6 s for the continuous stream it replaces
+  (`CT_EL_VOICE_MODE=stream` keeps that one).
+- **The Soniox voice reads clauses too** (`CT_SX_VOICE_MODE=clauses`, the default): the
+  same cut rule, the same steady delay behind the preacher and the same Expression tags
+  (Soniox v2 reads them as directions; none is spoken). Soniox takes no context, so its
+  clips are not stitched; each starts fresh, and there are fewer joins than one clip per
+  caption. `CT_SX_VOICE_MODE=clips` keeps one clip per caption.
+- **Expression from a model of its own** (Settings › Voice › Expression tags, off by
+  default, so the media team can try the voice both ways). A language model that is not the
+  translator styles each clip for the speech model the moment it is cut, in that model's
+  own markup: one delivery tag from the Expression list where a sentence begins
+  (`[earnestly]`, `[reverently]`, …), a word or two in capitals where the sentence leans on
+  it, an ellipsis where a weighty pause fits; most clips are left as they are. The words
+  never change: an answer that alters a word, its order or its punctuation, or styles more
+  than that, is turned away and the clip is read plainly. A quick tag, asked when the
+  sentence's first words arrive, stands in when the styling is not back in time. Claude
+  Haiku 5.5, about $0.30 an hour of preaching (measured) and 1.8-2.5 s a clip; so that the
+  clips have that time, the voice sits `CT_VOICE_STYLE_S` (1.5 s) further behind the
+  preacher while the setting is on. Without an
+  Anthropic key, Luna (gpt-6-luna) does the same with the same prompts. A slow or failed
+  call means a plainer clip, never a held voice. The translation prompt is untouched.
+  `CT_VOICE_DIRECTOR_MODEL` names another Claude model; `CT_VOICE_DIRECTOR=off` removes the
+  setting.
+- **Pronouns for God get their capital letter.** The Decision Router also asks
+  whether a caption's translation has a pronoun for God, Christ or the Spirit in
+  lower case ("that he may pour out his grace", "God raised him from the dead").
+  If it does, the line goes to the translator, which now capitalises them in English
+  (He, Him, His; You, Your in prayer) as it already did in Romanian. On the
+  2026-11-15 services this caught 17 of the 18 such lines picked out by hand, and
+  would have sent about 4% more lines to the translator. `CT_ROUTER_PRONOUN` sets
+  the bar (default 0.5; 0.7 sends about half as many lines and catches about two
+  in three; 0 turns it off). It is asked only for captions in a language that
+  capitalises them (see below). The session record shows each line's `pronoun`
+  score.
+- **Quotation marks are checked one caption later.** The recogniser opens a
+  quotation at every "X spune:", and it often closes it one to four captions late,
+  after the preacher has gone back to his own words. While a quotation is open on
+  the wall, Luna is now asked as each new caption goes up whether it is still the
+  quoted words. If it isn't, the closing mark goes on the caption before, and the
+  late one is dropped. Only the two newest captions are touched. On the 2026-11-15
+  services, of 13 misplaced quotations this would have put 5 right and cut 5 much
+  shorter, and closed 1 of 126 correct ones a caption early. `CT_QUOTE_JUDGE`
+  starts on `log`: it asks, and notes each answer in the session record (shown on
+  the session page) without changing the wall, so a service can be checked first.
+  `on` lets it move the marks, and `off` stops asking.
+
+### Changed
+- **The ProPresenter box can follow several Looks, separated by semicolons.**
+  `CT_PROPRESENTER_LOOK=Speaking; Announcements` shows the follow-the-Mic box while
+  the translation is on and either Look is live, and clears it on any other. With
+  semicolons a Look's name may contain a comma; a list with no semicolon is still
+  read as comma-separated, as before.
+- **The clauses voice reads at one steady pace.** It used to read each late clip 5% or
+  10% faster, and the drift ladder (1.1x past 4 s of audio waiting, 1.25x past 10 s, 1.4x
+  past 16 s) applied on top. The ladder also fired inside any sentence longer than 4 s, since the
+  voice's audio arrives 4-6 times faster than it plays, so over a whole service the voice
+  changed speed about 18 times a minute and swung between pausing and hurrying about
+  a thousand times. Now one pace follows how late sentences have been starting (quick
+  to rise, slow to fall, from 1x to 1.3x), changes only where a sentence begins and by
+  at least 0.05, and a sentence fed with over 15 s already waiting reads at 1.4x. Over
+  both 15 November services, simulated whole (`validation/scripts/voice_pace_sim.py`):
+  the same pauses, about a twelfth of the swings. The skip past 25 s waiting stays.
+- **Settings › Voice › Sentence wait (6-12 s)** sets how far behind the preacher the
+  voice speaks, for the clauses voice. Longer reads more whole sentences (at 12 s, 90%
+  of sentences have their full stop on screen in time; at 6 s, 63%). With Expression
+  tags on it waits at least 8 s, so each clip has time to be styled. Until it is moved,
+  it follows the server's `CT_VOICE_DELAY_S` (12 s).
+- **The voice sits 12 s behind the preacher (was 6 s) and waits for whole sentences.**
+  The page holds every clip until `CT_VOICE_DELAY_S` after he began it anyway, so while
+  that moment is still ahead the voice now waits for the full stop through commas and
+  his pauses, instead of cutting whenever its own queue ran low. When the moment comes
+  with no full stop, the clip goes at once up to its last comma. In the live logs of
+  the 15 November services, 90% of sentences (73% of the words) reach the screen with
+  their full stop within 12 s of his first word, against 63% (33%) within 6 s. On two
+  minutes of the 29 March sermon: 5 clips of 20 end without a full stop (11 of 26 at
+  6 s), and none has to be read faster to catch up (47 s of it at 6 s). Waiting for
+  the next comma instead kept 2 more sentences whole but read 30 s faster; Jo chose
+  on time. A page that sends no due time keeps the old rule. The rest of a sentence cut
+  at a comma follows straight on, instead of waiting for its own moment, when it is
+  ready while the voice still speaks or within 1.5 s of it falling silent: the pauses
+  of 0.4-3.7 s in the middle of those sentences fell to 0-0.4 s, still 12 s behind.
+- **Expression tags can fix how the voice says a word.** The director may now list
+  a word with a respelling for the voice (Job as "Jobe", a name it does not know, read
+  or lead where the sentence decides, John 3:16 as "John three sixteen"). Only words
+  in the clip, respelled in letters, up to four a clip; the wall keeps the caption's
+  own spelling.
+- **Expression tags no longer put the voice further behind.** `CT_VOICE_STYLE_S` is 0
+  (was 1.5 s): at 12 s each clip already waits longer than Haiku takes to style it.
+- **The header fits half a screen without breaking unevenly.** The ribbon stays one
+  row and folds as the window narrows, a step at a time and only as far as it must:
+  Speak, Project, Clear wall and Settings to their glyphs, then the Mic (Start
+  listening reads Start), then Auto to A, then the language pair to its codes
+  (HU → EN). It measures the real buttons, keeping 24 px spare, so no width spills a
+  full-size button onto a second row; only with every step taken (below about 716 px)
+  do the groups wrap, whole. The lights leave the name's line for one of their own,
+  in smaller pills, when they would not fit beside it, and never break inside it
+  above about 686 px. A resize refits from scratch; a change mid-service (Stop, a
+  verse pill, the Voice light) can only fold further, so nothing flickers.
+- **Swap and the Mic each share one split button with their Auto.** The left half
+  does it by hand, the right half (Auto, glowing while it is on) hands it to Áron:
+  following the speaker's language, or the Gates muting for songs and prayer. The
+  rule is the same for both: doing it by hand turns Auto off, and only a tap on Auto
+  turns it back on. For the Mic that is the old Manual, now shown as Auto unlit. For
+  the direction it is new: a Swap used to be a correction Auto kept tracking from.
+- **ElevenLabs stability defaults to 0.65** (was 0.5): a little steadier, rated
+  "expression not too heavy" in the same listening.
+- **The Decision Router's threshold is 0.2 again** (it was 0.3 from 2026-10-30).
+  Replayed on the 2026-11-15 services, the lines scoring between 0.2 and 0.3 came
+  back from the translator better 62 times and worse 11 times, mostly in Scripture
+  wording and names ("goodness and mercy", Elimelech, Chemosh, Orpah). It sends
+  about a third of a sermon's lines on instead of a fifth: more translator calls,
+  and those lines show about a second later. `CT_ROUTER_THRESHOLD` sets it.
+- **The translator's rules hold in every language, not only Romanian and English.**
+  The prompt was written around a Romanian ⇄ English service, and several rules
+  only named those two languages. Each rule now states the principle for any
+  language, with the Romanian examples kept: every language's oaths, soft swear
+  words and hesitation sounds; the target language's own punctuation (Spanish
+  ¿…?, French « … », German „…“, Chinese 。) and number format (4 000, 4.000);
+  capitals only in scripts that have them. On 80 lines from the 2026-11-15
+  services, Romanian and English captions changed no more than they do between
+  two runs of the same prompt.
+- **Capitals for God follow each language's custom, the same in every caption.**
+  English, Romanian, Polish, Russian, Ukrainian, Indonesian and Malay captions
+  capitalise pronouns for God, Christ and the Spirit (each language's forms are
+  named in the prompt). Every other language keeps them in lower case, always.
+  Before, it was left to the model each time: French came out "Te" in one run and
+  "te" in the next, and German and Spanish took English-style capitals. In three
+  runs of 14 languages, every caption now follows its language's rule.
+  `CT_DIVINE_CAPS` (language codes) changes the list for a church whose custom
+  differs, e.g. a Dutch church reading the HSV.
+- **The Decision Router names the languages it is judging.** Its questions said
+  "a Romanian sermon translated into English" whatever was spoken. During
+  2026-11-15's English sermon, that made it read English speech as Romanian. They
+  now name each line's spoken and caption languages. Measured on the Router's
+  2026-10-08 test sets: as good or better on each (bad Romanian lines caught 14 of
+  14, was 13; fewer false alarms on idioms and mis-hears). On hand-made lines in
+  other language pairs it caught 11 of 12 bad lines with no false alarms. On 600
+  lines of the 2026-11-15 services it made the same call on 533, and sent 21.8% of
+  them on instead of 24.3%.
+
+### Fixed
+- **Each language's own quotation marks on the wall.** The page rewrote every
+  caption's quotation marks to English “…” (Romanian „…”). That replaced the
+  translator's correct « … » in French, „…“ in German and 「…」 in Japanese.
+  Captions in German, Czech, Slovak and Bulgarian now keep „…“; Polish and
+  Hungarian „…”; French, Spanish, Italian, Catalan, Russian, Ukrainian, Greek and
+  Norwegian « … »; Japanese and Traditional Chinese 「…」; the rest “…”. The voice
+  still finds a sentence's end when it closes on one of them, or on 。！？.
+- **The translator no longer opens or closes a quotation halfway through.** A line
+  the Router sends on now keeps only the quotation marks that its source line has
+  wherever a quotation carries on into another caption. The translator places marks
+  by meaning, but it sees one caption, and the next one is usually Soniox's. On
+  2026-11-15 it opened or closed a quotation mid-way four times, and once dropped
+  the closing mark of a hymn verse, which then stayed open for 60 words. A quotation
+  the translator opens and closes within one caption is left as it wrote it.
+
 ## [v2.23.0] — 2026-11-16
 
 ### Changed
