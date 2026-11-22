@@ -134,9 +134,28 @@ class LookGate(unittest.TestCase):
         self.assertEqual([q[1] for q in pp.requests], ["/v1/look/current"])
 
     def test_names_ignore_case_and_may_be_a_list_or_a_uuid(self):
-        for wanted in ("translation", "Worship, TRANSLATION", self.UUID):
+        for wanted in ("translation", "Worship; TRANSLATION", " Worship ;Translation; ",
+                       "Worship, TRANSLATION", self.UUID, "Worship; " + self.UUID):
             s, _ = self.server(self.look("Translation", self.UUID), wanted)
             self.assertEqual(post(s, action="show").get_json(), {"ok": True}, wanted)
+
+    def test_a_look_not_in_the_list_is_held(self):
+        s, _ = self.server(self.look("Worship"), "Speaking; Announcements")
+        self.assertEqual(post(s, action="show").get_json()["held"], "look")
+
+    def test_names_with_spaces(self):
+        s, _ = self.server(self.look("Sunday Speaking"), "Announcements Wide; Sunday Speaking")
+        self.assertEqual(post(s, action="show").get_json(), {"ok": True})
+        s, _ = self.server(self.look("Sunday Speaking"), "sunday   speaking")   # spacing and case aside
+        self.assertEqual(post(s, action="show").get_json(), {"ok": True})
+        s, _ = self.server(self.look("Sunday"), "Sunday Speaking")              # a part is not the name
+        self.assertEqual(post(s, action="show").get_json()["held"], "look")
+
+    def test_with_semicolons_a_name_may_hold_a_comma(self):
+        s, _ = self.server(self.look("Prayer, kneeling"), "Speaking; Prayer, kneeling")
+        self.assertEqual(post(s, action="show").get_json(), {"ok": True})
+        s, _ = self.server(self.look("Prayer"), "Speaking; Prayer, kneeling")
+        self.assertEqual(post(s, action="show").get_json()["held"], "look")
 
     def test_a_flat_look_reply_is_read_too(self):
         s, _ = self.server({"uuid": self.UUID, "name": "Translation", "index": 0, "screens": []})

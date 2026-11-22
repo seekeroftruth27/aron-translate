@@ -195,12 +195,15 @@ ROUTER_TIMEOUT_MS = int(os.environ.get("CT_ROUTER_TIMEOUT_MS", "1200"))
 # judged blind): rough-or-wrong lines on the wall 7.5 -> 5.0 per 100, a third
 # of lines sent on, +0.1 s a word; below 0.2 the redos only polish. Back to
 # 0.3 on 2026-10-30 (Joseph): live, 0.2 sent on too many lines for what the
-# redos gained. The page's slider was removed 2026-10-28; this is the one place
-# to change it.
+# redos gained. 0.2 again from 2026-11-17 (Jo): replayed on the 2026-11-15
+# services, the lines between 0.2 and 0.3 sent on came back better 62 times
+# and worse 11 (466 more lines, 21-23% -> 31-34% sent on), mostly Scripture
+# wording and names. The page's slider was removed 2026-10-28; this is the one
+# place to change it.
 try:
-    ROUTER_TH = min(0.9, max(0.1, float(os.environ.get("CT_ROUTER_THRESHOLD") or 0.3)))
+    ROUTER_TH = min(0.9, max(0.1, float(os.environ.get("CT_ROUTER_THRESHOLD") or 0.2)))
 except ValueError:
-    ROUTER_TH = 0.3
+    ROUTER_TH = 0.2
 # When the Router's mis-hear check gives no answer (failed, or over
 # CT_ROUTER_TIMEOUT_MS), a line holding a word Soniox scored under this is sent
 # on as a likely mis-hear instead of kept. Only then: on 188 lines with a word
@@ -212,13 +215,32 @@ try:
     ROUTER_UNSURE = min(0.9, max(0.0, float(os.environ.get("CT_ROUTER_UNSURE") or 0.3)))
 except ValueError:
     ROUTER_UNSURE = 0.3
+# A line whose translation holds a pronoun for God in lower case ("that he may
+# pour out his grace") goes to the translator, which capitalises it, when the
+# Router's pronoun question (router_gate.questions) scores it over this. 0.5 caught
+# 17 of 18 such lines on 2026-11-15 and sent about 4% more lines on; 0.7 sends
+# about half as many and catches about two in three. 0 does not ask.
+try:
+    ROUTER_PRONOUN = min(0.9, max(0.0, float(os.environ.get("CT_ROUTER_PRONOUN") or 0.5)))
+except ValueError:
+    ROUTER_PRONOUN = 0.5
+# Quotation marks, one caption later (router_gate.quote_check): while a quotation
+# is open on the wall, each new caption is asked whether it is still inside it,
+# and when not, the page closes it on the caption before. "on" does that, "log"
+# only asks and writes the answer into the session record (to check it against a
+# service before it touches the wall), "off" does not ask.
+QUOTE_JUDGE = (os.environ.get("CT_QUOTE_JUDGE") or "log").strip().lower()
+if QUOTE_JUDGE not in ("off", "log", "on"):
+    QUOTE_JUDGE = "log"
 from witness_align import (packet_state as witness_state, reaches_end as witness_reaches_end,
                            stale as witness_stale, WIT_NOTE)
 import voice_stream
+import voice_clauses
+import voice_director
 from synthesize import (synthesize_stream, synthesize_bytes, AUDIO_MIME,
                         prewarm as tts_prewarm,
                         get_session as _get_http_session, TTS_PROVIDER,
-                        SX_TTS_MODEL, SX_VOICE, el_takes_tags,
+                        SX_TTS_MODEL, SX_VOICE, el_takes_tags, el_takes_context,
                         EL_TTS_MODEL, EL_VOICE)
 # Optional external caption relay (e.g. a PHP endpoint on the church's own web
 # host): when configured, the browser asks THIS server to forward each finalized
@@ -280,11 +302,19 @@ PROJECT_CAPABLE = bool(CT_PROPRESENTER_URL and CT_PROPRESENTER_MESSAGE)
 # operator or Gate music) or Stop. Off by default: the Message carries the text.
 CT_PROPRESENTER_FOLLOW_MIC = (os.environ.get("CT_PROPRESENTER_FOLLOW_MIC") or "").strip().lower() in ("1", "true", "yes", "on")
 # ...only while one of these audience Looks is live (CT_PROPRESENTER_LOOK, names or
-# uuids, comma-separated; matched without regard to case). Empty = any Look. With a
-# Look set, the box comes on only when the translation is on AND that Look is live,
-# and goes off when the operator switches to another Look; the page asks
-# /project/look every few seconds while listening.
-CT_PROPRESENTER_LOOK = [w.strip() for w in (os.environ.get("CT_PROPRESENTER_LOOK") or "").split(",") if w.strip()]
+# uuids, semicolon-separated, e.g. "Speaking; Announcements"; matched without regard
+# to case). Empty = any Look. With Looks set, the box comes on only when the
+# translation is on AND one of them is live, and goes off when the operator switches
+# to any other; the page asks /project/look every few seconds while listening.
+def _look_list(raw):
+    """The Looks named in CT_PROPRESENTER_LOOK. Semicolons separate them, so a Look's
+    name may hold a comma; a value with no semicolon is split on commas, as the
+    setting was until 2026-11-21."""
+    raw = raw or ""
+    return [w.strip() for w in raw.split(";" if ";" in raw else ",") if w.strip()]
+
+
+CT_PROPRESENTER_LOOK = _look_list(os.environ.get("CT_PROPRESENTER_LOOK"))
 
 
 def _pp_int_env(name, default, lo, hi):
@@ -518,8 +548,10 @@ def _pp_look_state():
     name, uuid, err = _pp_current_look()
     if err:
         return None, "", err
-    wanted = {w.casefold() for w in CT_PROPRESENTER_LOOK}
-    return (name.strip().casefold() in wanted or uuid.casefold() in wanted), name, None
+    def norm(w):   # case and runs of spaces don't matter: "Sunday  speaking" is "Sunday Speaking"
+        return " ".join(w.split()).casefold()
+    wanted = {norm(w) for w in CT_PROPRESENTER_LOOK}
+    return (norm(name) in wanted or norm(uuid) in wanted), name, None
 
 
 def _pp_clear():
@@ -737,20 +769,58 @@ print("[app] TTS " + (f"ready via {', '.join(n for _, n in TTS_PROVIDERS)}"
                       if TTS_CAPABLE else
                       "OFF (set ELEVENLABS_API_KEY + CT_EL_VOICE, or SONIOX_API_KEY)"), flush=True)
 # Voice settings the page no longer shows (2026-10-28): set once here.
-# Stream: ElevenLabs v4 / v4 Turbo read the service as one continuous speech
-# (voice_stream) instead of a clip per caption. Expression: the translator may
-# lead a spoken line with a delivery tag such as [gently]. Tighten pauses:
-# Soniox shortens the pauses between words (~10% shorter audio). Stability:
-# ElevenLabs voice stability (not used by Stream).
+# Voice mode (CT_EL_VOICE_MODE), for ElevenLabs v4 / v4 Turbo:
+#   clauses (default, 2026-11-18) the voice is cut for speaking, not reading:
+#           clips end at full stops, and at a comma only once the clip is due
+#           with no full stop in sight; each clip is stitched to the ones before it
+#           (VoiceContext) and a sentence's first clip carries its delivery tag
+#           (voice_director); the page plays each clip a steady
+#           CT_VOICE_DELAY_S behind the preacher (scripts/voice_clauses.py)
+#   stream  one continuous socket for the service (scripts/voice_stream.py)
+#   clips   one request per caption sentence
+# CT_EL_STREAM=0, from before the modes, still means clips.
+# Expression: the translator may lead a spoken line with a delivery tag such as
+# [gently] (clips and stream only; clauses take theirs from voice_director).
+# Tighten pauses: Soniox shortens the pauses between words (~10% shorter audio).
+# Stability: ElevenLabs voice stability, 0.65 since 2026-11-18 (the voice lab's
+# pick: steadier than Brian's own 0.5, expression "not too heavy"); not used by
+# the stream.
 def _env_on(name, default):
     return (os.environ.get(name) or default).strip().lower() not in ("0", "false", "no", "off")
-EL_STREAM = _env_on("CT_EL_STREAM", "1")
+EL_VOICE_MODE = (os.environ.get("CT_EL_VOICE_MODE") or "").strip().lower()
+if EL_VOICE_MODE not in ("clauses", "stream", "clips"):
+    EL_VOICE_MODE = "clips" if not _env_on("CT_EL_STREAM", "1") else "clauses"
+# The Soniox voice reads clauses too (CT_SX_VOICE_MODE: clauses, the default, or
+# clips): the same cut rule, the same delay behind him and the same tags, but no
+# stitching -- Soniox takes no context, so each clip starts fresh.
+SX_VOICE_MODE = (os.environ.get("CT_SX_VOICE_MODE") or "clauses").strip().lower()
+if SX_VOICE_MODE not in ("clauses", "clips"):
+    SX_VOICE_MODE = "clauses"
+EL_STREAM = EL_VOICE_MODE == "stream"
 EL_EXPRESSION = _env_on("CT_EL_EXPRESSION", "0")
 SX_TIGHTEN = _env_on("CT_SX_TIGHTEN", "1")
 try:
-    EL_STABILITY = min(1.0, max(0.0, float(os.environ.get("CT_EL_STABILITY") or 0.5)))
+    EL_STABILITY = min(1.0, max(0.0, float(os.environ.get("CT_EL_STABILITY") or 0.65)))
 except ValueError:
-    EL_STABILITY = 0.5
+    EL_STABILITY = 0.65
+try:
+    VOICE_DELAY_S = min(20.0, max(0.0, float(os.environ.get("CT_VOICE_DELAY_S") or 12.0)))
+except ValueError:
+    VOICE_DELAY_S = 12.0
+# With Expression tags on, the voice may sit this much further behind him, so each
+# clip has time to be styled before its moment (Haiku: 1.8-2.5 s a clip). 0 since
+# the delay went to 12 s (2026-11-20): a clip waits that long for its moment anyway.
+try:
+    VOICE_STYLE_S = min(10.0, max(0.0, float(os.environ.get("CT_VOICE_STYLE_S") or 0.0)))
+except ValueError:
+    VOICE_STYLE_S = 0.0
+print(f"[app] Soniox voice: {SX_VOICE_MODE}"
+      + (f" ({VOICE_DELAY_S:g} s behind him)" if SX_VOICE_MODE == "clauses" else ""), flush=True)
+print(f"[app] ElevenLabs voice: {EL_VOICE_MODE}"
+      + (f" (clips cut at full stops, {VOICE_DELAY_S:g} s behind him; tags from "
+         f"{ {'claude': voice_director.CLAUDE_MODEL, 'luna': voice_director.LUNA_MODEL}.get(voice_director.backend(), 'nobody') })"
+         if EL_VOICE_MODE == "clauses" else "")
+      + f", stability {EL_STABILITY:g}", flush=True)
 # The translator that also hears each caption's audio (gemini-3.6-flash + audio)
 # left the Model menu 2026-10-29; CT_GEMINI_AUDIO=1 offers it again.
 GEMINI_AUDIO = _env_on("CT_GEMINI_AUDIO", "0")
@@ -1975,7 +2045,9 @@ def stt_stream(ws):
 # Mirrors the client's splitAtLastTerminal (app/index.html) -- used to pull
 # COMPLETE sentences off Claude's growing streamed output so each one can be
 # handed to TTS as soon as it's ready, instead of waiting for the whole batch.
-_SENTENCE_END_RE = re.compile(r"[.!?…][\"'’”)\]]?(?=\s|$)")
+# A caption may close a quotation the way its language does (the page's
+# Q_STYLE: ” “ » 」) and end a sentence with 。！？.
+_SENTENCE_END_RE = re.compile(r"[.!?…。！？][\"'’”“»」)\]]?(?=\s|$)")
 
 
 def _split_complete_sentences(text):
@@ -2122,6 +2194,70 @@ def _tts_chunk_lines(text, opts, meta=None):
 
 
 VOICE_STREAM = voice_stream.VoiceStream()
+VOICE_DIRECTOR = voice_director.VoiceDirector()
+VOICE_CLAUSES = voice_clauses.ClauseVoice(VOICE_DIRECTOR)
+
+
+def _num(v):
+    """A number from the page, or None."""
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _clauses_wanted(data, opts):
+    """How much speech the room's voice still has queued (seconds) when this
+    request's words should go into the clause buffer (voice_clauses), else
+    None: the clauses mode for this voice -- ElevenLabs with a model that takes
+    request stitching, or Soniox."""
+    provider = opts.get("provider") or TTS_PROVIDER
+    if provider == "soniox":
+        if SX_VOICE_MODE != "clauses":
+            return None
+    elif provider != "elevenlabs" or EL_VOICE_MODE != "clauses" or \
+            not el_takes_context(opts.get("el_model") or EL_TTS_MODEL):
+        return None
+    try:
+        return max(0.0, float(data.get("voice_lag") or 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _clause_push(text, opts, lag, tags=False, due=None):
+    """Hand one sentence (or open tail) to the clause buffer now; the part it
+    returns is spoken, or found to have ridden in an earlier clip, by
+    _clause_tts_lines. `tags`: the page's Expression tags setting (opt-in),
+    whether a sentence this part begins asks voice_director for its tag;
+    `due`: seconds until the page would play this caption (voice_due_s)."""
+    if (opts.get("provider") or TTS_PROVIDER) == "soniox":
+        key = ("soniox", opts.get("sx_voice") or SX_VOICE, opts.get("sx_model") or SX_TTS_MODEL,
+               opts.get("language"))
+    else:
+        key = ("elevenlabs", opts.get("el_voice") or EL_VOICE, opts.get("el_model") or EL_TTS_MODEL,
+               opts.get("language"))
+    return VOICE_CLAUSES.push(text, key, lag, tags=tags, due=due)
+
+
+def _clause_tts_lines(part, opts, meta=None):
+    """The audio lines for one part: nothing if its words were spoken in an
+    earlier part's clip; else the clip as the director styled it (or plain,
+    with its sentence's tag), through the stitched clip path
+    (_tts_chunk_lines). Never raises (_safe_tts_chunk)."""
+    try:
+        clip = part.wait()
+    except RuntimeError as exc:
+        yield json.dumps({"type": "error", "stage": "tts", "error": str(exc)}) + "\n"
+        return
+    if not clip:
+        return
+    words, tag = VOICE_CLAUSES.speech(part)       # the director's styling, or the plain clip
+    if (opts.get("provider") or TTS_PROVIDER) == "soniox":
+        yield from _safe_tts_chunk(words, {**opts, "sx_tag": tag} if tag else opts, meta)
+        return                                    # Soniox v2 reads [tags] too
+    model = opts.get("el_model") or EL_TTS_MODEL
+    tag = tag if el_takes_tags(model) else None
+    yield from _safe_tts_chunk(words, {**opts, "el_tag": tag} if tag else opts, meta)
 
 
 def _stream_wanted(data, opts):
@@ -2344,11 +2480,14 @@ def translate_ep():
     tts_opts = _tts_opts(data, target_lang)
     speak = speak and _voice_can(tts_opts, target_lang)
     stream_lag = _stream_wanted(data, tts_opts) if speak else None
+    clause_lag = _clauses_wanted(data, tts_opts) if speak else None
+    clause_tags = bool(data.get("voice_tags"))      # Settings › Voice › Expression tags
+    clause_due = _num(data.get("voice_due_s"))      # seconds until the page would play it
     # Expression (CT_EL_EXPRESSION): the translator may lead its reply with a delivery tag
     # for the voice (translate_claude.VOICE_TAG_NOTE). Asked for only when the
     # reply will be spoken by a model that reads tags -- otherwise the prompt is
     # exactly what it was and there is nothing to take off.
-    expressive = (speak and EL_EXPRESSION
+    expressive = (speak and EL_EXPRESSION and clause_lag is None
                   and tts_opts["provider"] == "elevenlabs"
                   and el_takes_tags(tts_opts["el_model"]))
     # What the recorder files each clip under: the line that was spoken came
@@ -2413,6 +2552,35 @@ def translate_ep():
             tts_ctl["in"] = tts_in
             cancel = tts_ctl["cancel"]
 
+            if clause_lag is not None:
+                # Clauses: every sentence goes into the clause buffer the moment
+                # it is complete (so a clip can be cut as soon as its words are
+                # in); a reader then speaks, in order, each part that heads a clip.
+                parts = queue.Queue()
+
+                def _clause_feeder():
+                    while True:
+                        sentence = tts_in.get()
+                        if sentence is None or cancel.is_set():
+                            parts.put(None)
+                            return
+                        parts.put(_clause_push(sentence, tts_opts, clause_lag, clause_tags, clause_due))
+
+                def _clause_worker():
+                    while True:
+                        part = parts.get()
+                        if part is None:
+                            tts_out.put(None)
+                            return
+                        lines = _clause_tts_lines(part, tts_opts, rec_meta)
+                        for line in lines:
+                            if cancel.is_set():
+                                lines.close()
+                                break
+                            tts_out.put(line)
+
+                threading.Thread(target=_clause_feeder, daemon=True).start()
+
             if stream_lag is not None:
                 # The continuous voice: every sentence goes into the open
                 # connection the moment it is complete; a reader takes the audio
@@ -2470,7 +2638,8 @@ def translate_ep():
                             break
                         tts_out.put(line)
 
-            threading.Thread(target=_tts_worker if stream_lag is not None
+            threading.Thread(target=_clause_worker if clause_lag is not None
+                             else _tts_worker if stream_lag is not None
                              else _tts_worker_clips, daemon=True).start()
 
         # Hands on whatever of the reply is new since the last call -- to the
@@ -2762,7 +2931,9 @@ def route_ep():
     """Router (STT panel): keep Soniox's own translation of a segment, or have
     the translator model redo it? body {ro, en, ctx:[{ro,en},...]} (earlier
     segments, oldest first; the doubt bar is ROUTER_TH; optional conf, Soniox's
-    per-word confidence in ro, against ROUTER_UNSURE). -> router_gate.decide(). The page waits only
+    per-word confidence in ro, against ROUTER_UNSURE; lang and src_lang, the
+    caption's language and the spoken one, which the questions name -- the
+    pronoun question is asked only where captions capitalise God's pronouns). -> router_gate.decide(). The page waits only
     CT_ROUTER_TIMEOUT_MS for the answer and keeps Soniox's text past that, so
     a slow call costs a check, never a caption."""
     if not HAS_OPENAI_KEY:
@@ -2774,10 +2945,31 @@ def route_ep():
     ctx = [c for c in (data.get("ctx") or []) if isinstance(c, dict)][-router_gate.SL_CTX:]
     conf = data.get("conf") if isinstance(data.get("conf"), list) else None
     out = router_gate.decide(ro, en, ctx, timeout=ROUTER_TIMEOUT_MS / 1000, th=ROUTER_TH,
-                             conf=conf, unsure=ROUTER_UNSURE)
+                             conf=conf, unsure=ROUTER_UNSURE, div=ROUTER_PRONOUN,
+                             src=data.get("src_lang") or None, tgt=data.get("lang") or None)
     print(f"[rt ] {out['ms']}ms bad {out.get('bad')} sens {out.get('sens')} sl {out.get('sl')}"
-          f" low {out.get('low')}"
+          f" div {out.get('div')} low {out.get('low')}"
           f" -> {out['why'] or 'keep'}: {en[:60]!r}", flush=True)
+    return jsonify(out), 200
+
+
+@app.route("/quote-check", methods=["POST"])
+def quote_check_ep():
+    """Is the quotation still running? body {lines:[{ro,en},...], at}: the captions
+    from a few before the one that opened it (`at`) to the newest, which it reached
+    still open. -> router_gate.quote_check(): {qin, act, ms}; {act: ""} when
+    CT_QUOTE_JUDGE is off or there is no OpenAI key. The page asks after the
+    newest caption is up, so a slow answer costs a fix, never a caption."""
+    if not HAS_OPENAI_KEY or QUOTE_JUDGE == "off":
+        return jsonify(act=""), 200
+    data = request.get_json(silent=True) or {}
+    lines = [c for c in (data.get("lines") or []) if isinstance(c, dict)]
+    at = data.get("at")
+    if not isinstance(at, int) or not 0 <= at < len(lines) - 1 or len(lines) > 40:
+        return jsonify(act=""), 200
+    out = router_gate.quote_check(lines, at, timeout=ROUTER_TIMEOUT_MS / 1000)
+    print(f"[qt ] {out['ms']}ms qin {out.get('qin')} -> {out['act'] or 'open'}"
+          f" ({QUOTE_JUDGE}): {(lines[-1].get('en') or '')[:60]!r}", flush=True)
     return jsonify(out), 200
 
 
@@ -2846,6 +3038,9 @@ def speak_stream_ep():
     opts = _tts_opts(data, target_lang)
     meta = {"src": (data.get("src") or "").strip(), "lang": target_lang}
     lag = _stream_wanted(data, opts)
+    clause_lag = _clauses_wanted(data, opts)
+    clause_tags = bool(data.get("voice_tags"))
+    clause_due = _num(data.get("voice_due_s"))
 
     def generate():
         if not text or not _voice_can(opts, target_lang):
@@ -2853,6 +3048,10 @@ def speak_stream_ep():
         # what /translate's worker would have been handed: the complete
         # sentences, then the open tail
         parts = [p.strip() for p in _split_complete_sentences(text) if p.strip()]
+        if clause_lag is not None:
+            for cp in [_clause_push(p, opts, clause_lag, clause_tags, clause_due) for p in parts]:
+                yield from _clause_tts_lines(cp, opts, meta)
+            return
         clips = [None] * len(parts)
         if lag is not None:
             try:
@@ -4376,6 +4575,8 @@ def caps_ep():
         router_timeout_ms=ROUTER_TIMEOUT_MS,
         router_th=ROUTER_TH,                           # named in the session record
         router_unsure=ROUTER_UNSURE,
+        router_pronoun=ROUTER_PRONOUN,                 # named in the session record
+        quote_judge=QUOTE_JUDGE if HAS_OPENAI_KEY else "off",   # on | log | off (CT_QUOTE_JUDGE)
         router_model=router_gate.MODEL,                # named in the session record
         soniox_model=SONIOX_RT_MODEL,                  # the Recognizer menu's default
         soniox_models=SONIOX_RT_CHOICES,               # ... and its choices
@@ -4391,6 +4592,11 @@ def caps_ep():
         # the voice settings set in .env, named in the session record
         el_stream=EL_STREAM, el_expression=EL_EXPRESSION,
         el_stability=EL_STABILITY, sx_tighten=SX_TIGHTEN,
+        el_voice_mode=EL_VOICE_MODE,                   # clauses | stream | clips
+        sx_voice_mode=SX_VOICE_MODE,                   # clauses | clips
+        voice_delay_s=VOICE_DELAY_S,                   # clauses: the page plays each clip this far behind him
+        voice_style_s=VOICE_STYLE_S,                   # ...and this much more with Expression tags on
+        voice_director=voice_director.backend() or "off",   # claude | luna | off: who picks the tags
         # Soundcheck voice capture: which backends can clone, and which of them
         # can additionally remix the speaker's accent towards the target
         # language (ElevenLabs can, Soniox can't -- see _elevenlabs_clone).

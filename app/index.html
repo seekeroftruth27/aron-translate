@@ -22,6 +22,7 @@
     --warn:#f59a3e; --warn-soft:rgba(245,154,62,.14); --ok:#5cc28a; --ok-soft:rgba(92,194,138,.16); --fallback:#e0703a;
     --meter-on:#5cc28a; --meter-off:#46506a; --meter-gated:#f59a3e;
     --scrim:rgba(5,7,10,.55); --shadow:0 24px 60px rgba(0,0,0,.5);
+    --glow:0 0 14px rgba(232,184,92,.32), inset 0 0 10px rgba(232,184,92,.16);
   }
   :root[data-theme="light"] {
     color-scheme: light;
@@ -34,6 +35,7 @@
     --warn:#a5560b; --warn-soft:rgba(165,86,11,.1); --ok:#1f8a50; --ok-soft:rgba(31,138,80,.13); --fallback:#b04a12;
     --meter-on:#1f8a50; --meter-off:#aab3c5; --meter-gated:#d07a20;
     --scrim:rgba(20,24,33,.28); --shadow:0 24px 60px rgba(20,24,33,.2);
+    --glow:0 0 12px rgba(201,150,50,.35), inset 0 0 8px rgba(201,150,50,.14);
   }
   *, *::before, *::after { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--text); -webkit-font-smoothing:antialiased;
@@ -65,6 +67,17 @@
      (right-aligned) rather than pushing the buttons after them onto a new line. */
   .lights { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px;
             flex:1 1 360px; min-width:0; }
+  /* ...and when they would not fit beside the name in one line, fitHeader()
+     gives them a line of their own, smaller (lrow), and smaller again (lsm) if
+     that line is still too short, rather than letting them break. */
+  .top.measuring { flex-wrap:nowrap; }
+  .top.measuring > * { flex-shrink:0; }
+  .top.measuring .lights { flex:none; flex-wrap:nowrap; }
+  .top.lrow .lights { order:3; flex:1 1 100%; justify-content:flex-start; gap:5px; }
+  .top.lrow > .vsep { display:none; }
+  .top.lrow .pill { height:28px; padding:0 9px; gap:6px; font-size:11.5px; }
+  .top.lsm .lights { gap:4px; }
+  .top.lsm .pill { height:26px; padding:0 7px; gap:5px; font-size:11px; }
   #mtHealth { display:contents; }
   .pill { display:inline-flex; align-items:center; gap:8px; height:34px; padding:0 13px; border-radius:999px;
           border:1px solid var(--border); background:var(--bg-panel); font-size:13px; font-weight:500;
@@ -129,7 +142,41 @@
      the way in and the way out, two buttons away from Stop. */
   .ribbon { display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; padding:12px 14px;
             background:var(--bg-panel); border:1px solid var(--border); border-radius:18px; }
-  .ribbon .end { margin-left:auto; display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+  .ribbon .end { margin-left:auto; display:flex; align-items:center; gap:8px; }
+  /* A narrow window folds the ribbon instead of spilling it onto a second row.
+     fitRibbon() adds the steps one at a time, only as far as the row needs:
+       f1  Speak, Project, Clear wall, Settings show only their glyph
+       f2  the Mic too (its glyph shows on / muted); Start listening -> Start
+       f3  Auto -> A
+       f4  the language pair -> its codes (HU → EN)
+     and only with all four in and still no room do the groups wrap, whole.
+     A folded label stays in the button for screen readers. */
+  .ribbon.measuring { flex-wrap:nowrap; }
+  .ribbon.measuring > * { flex-shrink:0; }
+  #langBtn .cur-s, .au .a { display:none; }
+  .ribbon.f1 .vsep { display:none; }
+  .ribbon.f1 .fold1 .lbl, .ribbon.f2 .fold2 .lbl, .ribbon.f3 .au .w {
+    position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+  .ribbon.f1 .fold1, .ribbon.f2 .fold2 { width:44px; min-width:0; padding:0; }
+  .ribbon.f2 #listen { width:112px; }
+  .ribbon.f2 #listen .long { display:none; }
+  .ribbon.f3 .au .a { display:inline; }
+  .ribbon.f3 .split > .au { width:40px; padding:0; }
+  .ribbon.f4 #langBtn .cur { display:none; }
+  .ribbon.f4 #langBtn .cur-s { display:inline; color:var(--text); }
+  /* Manual and Auto as one split button: the left half does it by hand (swap,
+     mute), the right half hands it to Áron. Doing it by hand turns Auto off, and
+     only a tap on Auto turns it back on. Two rounded rectangles sharing one edge;
+     Auto glows while it is on. */
+  .split { display:inline-flex; flex:none; }
+  .split > .btn { position:relative; }
+  .split > .btn:first-child { border-top-right-radius:0; border-bottom-right-radius:0; }
+  .split > .au { margin-left:-1px; border-top-left-radius:0; border-bottom-left-radius:0;
+                 min-width:0; padding:0 12px; font-size:13px; color:var(--text-2); }
+  .split > .btn:hover { z-index:2; }
+  .split.solo > .btn:first-child { border-radius:11px; }
+  .split > .au.on { z-index:1; background:var(--gold-soft); border-color:var(--gold-bg); color:var(--text);
+                    box-shadow:var(--glow); }
   #listen { display:inline-flex; align-items:center; justify-content:center; gap:10px; width:172px; height:50px;
             padding:0; border:0; border-radius:13px; background:var(--gold-bg); color:var(--gold-ink);
             font-size:16px; font-weight:700; cursor:pointer; white-space:nowrap; transition:background .15s, color .15s; }
@@ -140,13 +187,15 @@
   #modeInd .g-off, #modeInd[aria-pressed="true"] .g-on { display:none; }
   #modeInd[aria-pressed="true"] .g-off { display:block; }
   #modeInd[aria-pressed="true"] { background:var(--warn-soft); border-color:var(--warn); color:var(--warn); }
-  /* Whose the Mic is, beside it: Auto (the Gates') quiet, Manual (yours) marked;
-     pulsing when Manual lets music or prayer through. */
-  #micAuto { min-width:5.6em; padding:0 10px; font-size:12.5px; color:var(--text-2); }
-  #micAuto.manual { color:var(--warn); border-color:var(--warn); }
+  /* The Mic's Auto (the Gates move it) glows; off is Manual (yours), and it
+     pulses when Manual lets music or prayer through. */
   #micAuto.nudge { animation:micNudge 1.2s ease-in-out infinite; }
   @keyframes micNudge { 50% { background:var(--warn-soft); } }
   @media (prefers-reduced-motion:reduce){ #micAuto.nudge { animation:none; background:var(--warn-soft); } }
+  /* Muted by hand while one voice speaks: the Mic itself pulses (speakerHeldBack) */
+  #modeInd.nudge { z-index:2; animation:micHeld 1.2s ease-in-out infinite; }
+  @keyframes micHeld { 50% { box-shadow:0 0 0 3px var(--warn); } }
+  @media (prefers-reduced-motion:reduce){ #modeInd.nudge { animation:none; box-shadow:0 0 0 2px var(--warn); } }
   #speakBtn .g-on, #speakBtn[aria-pressed="true"] .g-off { display:none; }
   #speakBtn[aria-pressed="true"] .g-on { display:block; }
   #speakBtn[aria-pressed="false"] { color:var(--text-2); }
@@ -475,28 +524,29 @@
   </header>
 
   <section class="ribbon" aria-label="Service controls">
-    <button id="listen" type="button" title="Start listening (Space)"><svg class="i f g-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.2v13.6a.8.8 0 0 0 1.2.7l10.9-6.8a.8.8 0 0 0 0-1.4L9.2 4.5A.8.8 0 0 0 8 5.2z"/></svg><svg class="i f g-stop" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg><span id="listenTxt">Start listening</span></button>
+    <button id="listen" type="button" title="Start listening (Space)"><svg class="i f g-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.2v13.6a.8.8 0 0 0 1.2.7l10.9-6.8a.8.8 0 0 0 0-1.4L9.2 4.5A.8.8 0 0 0 8 5.2z"/></svg><svg class="i f g-stop" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg><span id="listenTxt">Start</span><span class="long" id="listenLong"> listening</span></button>
     <span class="vsep"></span>
     <div class="langctl">
       <button id="langBtn" class="btn" type="button" aria-haspopup="true" aria-expanded="false"
-              title="Target language. Tick one to translate everything into it; tick two for a bilingual service."><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg><span class="cur">…</span><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="width:16px;height:16px"><path d="M6 9l6 6 6-6"/></svg></button>
+              title="Target language. Tick one to translate everything into it; tick two for a bilingual service."><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg><span class="cur">…</span><span class="cur-s" aria-hidden="true"></span><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="width:16px;height:16px"><path d="M6 9l6 6 6-6"/></svg></button>
       <div id="langMenu" class="langmenu" hidden></div>
-      <button id="swapBtn" class="btn ico" type="button" aria-label="Swap direction"
-              title="Swap which language is being spoken."><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h15M15 4l4 4-4 4M20 16H5M9 12l-4 4 4 4"/></svg></button>
-      <button id="autoBtn" class="btn" type="button" aria-pressed="false"
-              title="Follow the speaker's language automatically.">Auto</button>
+      <div class="split" role="group" aria-label="Direction">
+        <button id="swapBtn" class="btn ico" type="button" aria-label="Swap direction"
+                title="Swap which language is being spoken."><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h15M15 4l4 4-4 4M20 16H5M9 12l-4 4 4 4"/></svg></button>
+        <button id="autoBtn" class="btn au" type="button" aria-pressed="false" aria-label="Auto-flip"
+                title="Follow the speaker's language automatically."><span class="w">Auto</span><span class="a" aria-hidden="true">A</span></button>
+      </div>
     </div>
     <span class="vsep"></span>
-    <button id="modeInd" class="btn tgl" type="button" aria-pressed="false"><svg class="i g-on" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11.5" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg><svg class="i g-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 9.4V6a3 3 0 0 0-5.7-1.3M9 9v2.5a3 3 0 0 0 4.9 2.3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 10.8 4.9M18.4 13.2c.1-.6.1-1.1.1-1.7M12 18v3M4 4l16 16"/></svg><span class="mt">Mic on</span></button>
-    <button id="micAuto" class="btn chip" type="button" aria-pressed="true" hidden>Auto</button>
-    <button id="speakBtn" class="btn tgl hide" type="button" aria-pressed="false"><svg class="i g-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.2L12 5.5v13l-4.8-4H4z"/><path d="M15.8 9.2a4 4 0 0 1 0 5.6M18.4 6.6a7.6 7.6 0 0 1 0 10.8"/></svg><svg class="i g-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.2L12 5.5v13l-4.8-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg><span class="mt">Speak off</span></button>
+    <div class="split solo" id="micSplit" role="group" aria-label="Microphone"><button id="modeInd" class="btn tgl fold2" type="button" aria-pressed="false"><svg class="i g-on" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11.5" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg><svg class="i g-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 9.4V6a3 3 0 0 0-5.7-1.3M9 9v2.5a3 3 0 0 0 4.9 2.3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 10.8 4.9M18.4 13.2c.1-.6.1-1.1.1-1.7M12 18v3M4 4l16 16"/></svg><span class="mt lbl">Mic on</span></button><button id="micAuto" class="btn au" type="button" aria-pressed="true" aria-label="Auto-mute" hidden><span class="w">Auto</span><span class="a" aria-hidden="true">A</span></button></div>
+    <button id="speakBtn" class="btn tgl fold1 hide" type="button" aria-pressed="false"><svg class="i g-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.2L12 5.5v13l-4.8-4H4z"/><path d="M15.8 9.2a4 4 0 0 1 0 5.6M18.4 6.6a7.6 7.6 0 0 1 0 10.8"/></svg><svg class="i g-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.2L12 5.5v13l-4.8-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg><span class="mt lbl">Speak off</span></button>
     <input type="checkbox" id="tts" hidden>
     <div class="end">
-      <button id="project" class="btn" type="button" title="Open the projector caption window (F11 for full screen)."><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12.5" rx="2"/><path d="M8.5 20.5h7M12 16.5v4"/></svg>Project</button>
-      <button id="clearWall" class="btn" type="button" title="Wipe the projector, web wall and ProPresenter; the transcript stays (W)."><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.6 19.5 4.3 15.2a1.6 1.6 0 0 1 0-2.3l8.6-8.6a1.6 1.6 0 0 1 2.3 0l4.3 4.3a1.6 1.6 0 0 1 0 2.3l-7.9 7.9"/><path d="M8.6 19.5H20M9 8.3l6.7 6.7"/></svg>Clear wall</button>
+      <button id="project" class="btn fold1" type="button" aria-label="Project" title="Open the projector caption window (F11 for full screen)."><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12.5" rx="2"/><path d="M8.5 20.5h7M12 16.5v4"/></svg><span class="lbl">Project</span></button>
+      <button id="clearWall" class="btn fold1" type="button" aria-label="Clear wall" title="Wipe the projector, web wall and ProPresenter; the transcript stays (W)."><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.6 19.5 4.3 15.2a1.6 1.6 0 0 1 0-2.3l8.6-8.6a1.6 1.6 0 0 1 2.3 0l4.3 4.3a1.6 1.6 0 0 1 0 2.3l-7.9 7.9"/><path d="M8.6 19.5H20M9 8.3l6.7 6.7"/></svg><span class="lbl">Clear wall</span></button>
       <span class="vsep"></span>
-      <button id="setBtn" class="btn" type="button" aria-controls="settings" aria-expanded="false"
-              title="Settings: microphone, translator, wall and voice"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>Settings</button>
+      <button id="setBtn" class="btn fold1" type="button" aria-label="Settings" aria-controls="settings" aria-expanded="false"
+              title="Settings: microphone, translator, wall and voice"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg><span class="lbl">Settings</span></button>
     </div>
   </section>
 
@@ -641,6 +691,11 @@
         <select id="ttsOut"><option value="">This window (default)</option></select></label>
       <div class="f" id="speedWrap" title="Soniox speaking rate."><span>Speed <b class="v" id="speedV">1.00×</b></span>
         <input type="range" id="speed" min="70" max="120" step="5" value="100" aria-label="Speed"></div>
+      <div class="f" id="delayWrap" title="How far behind the preacher the voice speaks. A longer wait lets it read whole sentences instead of cutting them at a comma. With Expression tags on it waits at least 8 s, so each clip has time to be styled. Applies from the next sentence."><span>Sentence wait <b class="v" id="delayV">12 s</b></span>
+        <input type="range" id="voiceDelay" min="6" max="12" step="1" value="12" aria-label="Sentence wait">
+        <p class="help" id="delayHelp"></p></div>
+      <label class="f" id="exprWrap" title="A model of its own (Claude Haiku 5.5, or Luna without an Anthropic key) reads what has been said and styles each clip for the voice: a delivery tag such as [earnestly] where a sentence begins, a word or two in capitals, a pause. It never changes a word. Off: the voice reads plainly. Applies from the next sentence."><div>Expression tags<p class="help">Tags, emphasis and pauses, from its own model.</p></div>
+        <input type="checkbox" class="sw" id="exprTags"></label>
       <div id="cloneWrap" class="vrows">
         <div class="f" title="Record the speaker at soundcheck so the translation speaks in their voice. One consenting speaker, quiet room.">
           <div>Speaker’s own voice<p class="help">Record them at soundcheck so the translation speaks in their voice.</p></div>
@@ -698,12 +753,12 @@ function applySink(a){
   return a.setSinkId(id).catch(e=>{ log('warn','audio output route failed: '+(e&&e.message||e)); });
 }
 const modelSel=$('model');
-const speedEl=$('speed'), speedV=$('speedV');
+const speedEl=$('speed'), speedV=$('speedV'), delayEl=$('voiceDelay');
 const elWrap=$('elWrap');
 const webWrap=$('webWrap'), webStream=$('webStream');
 const ppWrap=$('ppWrap'), ppStream=$('ppStream');
 const elVoice=$('elVoice');
-const ttsProv=$('ttsProv'), sxVoice=$('sxVoice');
+const ttsProv=$('ttsProv'), sxVoice=$('sxVoice'), exprTags=$('exprTags');
 // The Recognizer menu: Soniox realtime models the server offers (caps.soniox_models).
 // Measured 2026-11-03: validation/results/2026-11-03-soniox-v6/.
 const SX_MODEL_HELP={'stt-rt-v5':'Words on screen soonest.',
@@ -792,7 +847,9 @@ function ttsParams(){
           // the continuous voice (Stream): how far behind the captions it is, so
           // the server can hold sentences for more context while the room is
           // still hearing older audio
-          voice_lag:+audioDrift().toFixed(2),
+          voice_lag:+voiceLag().toFixed(2),
+          // the clauses voice: a delivery tag per sentence (Settings › Voice), opt-in
+          voice_tags:!!(exprTags&&exprTags.checked),
           sx:sxSettings(), sx_voice:sxVoice.value, sx_model:sxModelId()};
 }
 // Only one backend's controls are meaningful at a time, and the two parameter
@@ -806,7 +863,9 @@ function reflectTtsProvider(){
   // clones are the speaker exactly as captured -- so its controls appear only
   // where they mean something rather than sitting greyed out.
   const accent=clone && (caps.voice_clone_accent||[]).includes(ttsProvider());
-  for(const [id,on] of [['elVoiceWrap',!sx],['speedWrap',sx],['sxVoiceWrap',sx],
+  // Expression tags: the clauses voice only (ElevenLabs or Soniox), and only with a model to choose them.
+  const expr=clauseMode() && (caps.voice_director||'off')!=='off';
+  for(const [id,on] of [['elVoiceWrap',!sx],['speedWrap',sx],['delayWrap',clauseMode()],['sxVoiceWrap',sx],['exprWrap',expr],
                         ['cloneWrap',clone],
                         ['cloneAccentWrap',accent],['cloneStrengthWrap',accent&&cloneAccent.checked]]){
     const el=$(id); if(el) el.style.display = on ? '' : 'none';
@@ -1589,7 +1648,9 @@ function jConfig(){
     'Speech-to-text':caps.stt_stream?'Soniox '+sxModel()+' (stream)':'Silero + Soniox per segment',
     'Soniox translation':sonioxTranslateWanted(),
     'Tongues gate':(caps.tongue_gate||'drop')+(homeLang?' · home '+homeLang:''),
-    'Decision Router':routerOn()?'on · '+(caps.router_model||'gpt-6-luna')+' · threshold '+Math.round(100*(caps.router_th||0.3))+'%':'off',
+    'Decision Router':routerOn()?'on · '+(caps.router_model||'gpt-6-luna')+' · threshold '+Math.round(100*(caps.router_th||0.2))+'%'
+      +(caps.router_pronoun?' · pronouns '+Math.round(100*caps.router_pronoun)+'%':''):'off',
+    'Quote judge':caps.quote_judge||'off',
     'Extra ears':earsEnabled()?(selectedEars().map(n=>earLabels[n]||n).join(', ')||'none'):'off (CT_EARS=0)',
     'Wait for ears':(earWaitMs()/1000).toFixed(1)+' s',
     'Translator':modelSel.value==='none-fast'?'none, fast (Soniox)':modelSel.value,
@@ -1605,9 +1666,15 @@ function jConfig(){
     c['Speech service']=optText(ttsProv)||ttsProv.value;
     c['Voice']=optText(sx?sxVoice:elVoice)||'Default';
     c['Voice model']=sx?sxModelId():elModelId();
-    if(sx){ c['Speed']=(speedEl.value/100).toFixed(2)+'×'; c['Tighten pauses']=!!caps.sx_tighten; }
+    if(sx){ c['Speed']=(speedEl.value/100).toFixed(2)+'×'; c['Tighten pauses']=!!caps.sx_tighten;
+            if(caps.sx_voice_mode){ c['Voice mode']=caps.sx_voice_mode; }
+            if(caps.sx_voice_mode==='clauses'){ c['Voice delay']=voiceDelayS()+' s';
+              c['Voice tags']=exprTags.checked&&caps.voice_director&&caps.voice_director!=='off'?caps.voice_director:'off'; } }
     else { c['Stability']=Math.round((caps.el_stability??0.5)*100)+'%';
-           c['Expression tags']=!!caps.el_expression; c['Stream voice']=!!caps.el_stream; }
+           c['Expression tags']=!!caps.el_expression; c['Stream voice']=!!caps.el_stream;
+           if(caps.el_voice_mode){ c['Voice mode']=caps.el_voice_mode; }
+           if(caps.el_voice_mode==='clauses'){ c['Voice delay']=voiceDelayS()+' s';
+             c['Voice tags']=exprTags.checked&&caps.voice_director&&caps.voice_director!=='off'?caps.voice_director:'off'; } }
   }
   if(caps.record && caps.tts){ c['Record speech']=recBox.checked; c['Auto-save on exit']=recAutoBox.checked; }
   return c;
@@ -1932,7 +1999,7 @@ let liveSince=0;
 function setListenUI(on){
   ppFollowMic(on && translatingNow());   // ProPresenter's box follows the translation on/off
   listenBtn.classList.toggle('on',on);
-  $('listenTxt').textContent=on?'Stop':'Start listening';
+  $('listenTxt').textContent=on?'Stop':'Start'; $('listenLong').hidden=on;
   listenBtn.title=(on?'Stop listening':'Start listening')+' (Space)';
   liveSince=on?Date.now():0;
   if(on && !ytStartGuess) ytStartGuess=liveSince;
@@ -2096,10 +2163,11 @@ function toggleLang(code){
 
 // ---- direction controls: one state, two ways to move it --------------------
 // autoFlip is a MODE (may the engine move the direction by itself?); swap is an
-// ACTION (put it here, now). They are not alternatives: pressing swap while auto
-// is on is a CORRECTION, and auto keeps tracking from the corrected position --
-// so an operator fixing a bad flip mid-sermon has nothing to remember to switch
-// back on. With auto off, swap is the only thing that ever moves the direction.
+// ACTION (put it here, now). They sit together as one split button, and the rule
+// is the Mic's: doing it by hand takes it off Auto. A swap while auto is on turns
+// auto off, and only a tap on Auto turns it back on (2026-11-19: until then a swap
+// was a correction auto kept tracking from, which nobody could see on the button).
+// With auto off, swap is the only thing that ever moves the direction.
 let autoFlip=true;
 function setAutoFlip(on){
   autoFlip=!!on;
@@ -2110,12 +2178,14 @@ function swapDirection(){
   const p=sessionPair();
   if(!p) return;
   activeSrc=otherSide(activeSrc); lastPairSrc=activeSrc;
+  const wasAuto=autoFlip;
+  if(autoFlip){ autoFlip=false; saveSettings(); }
   // The operator has just told us the truth; the engine should not immediately
   // argue with it on the strength of one unit that is already in flight.
   lastSwapAt=performance.now();
   log('info','direction swapped → '+(LANG_NAMES[activeSrc]||activeSrc)+' → '
       +(LANG_NAMES[otherSide(activeSrc)]||otherSide(activeSrc))
-      +(autoFlip?' (auto still tracking)':' (manual)'));
+      +(wasAuto?' (auto-flip off until Auto is tapped)':' (manual)'));
   renderLangUI();
 }
 // Button face, menu ticks, which controls are live, and the direction badge.
@@ -2130,6 +2200,10 @@ function renderLangUI(){
   langBtn.querySelector('.cur').textContent = !p
     ? '→ '+(LANG_NAMES[langs[0]]||langs[0]||'')
     : (LANG_NAMES[activeSrc]||activeSrc)+' → '+(LANG_NAMES[otherSide(activeSrc)]||'');
+  // The same as codes, for a ribbon folded to its narrowest (fitRibbon).
+  const up=c=>(c||'').toUpperCase();
+  langBtn.querySelector('.cur-s').textContent = !p ? '→ '+up(langs[0])
+    : up(activeSrc)+' → '+up(otherSide(activeSrc));
   // Dotted underline = "this moved on its own and may move again".
   langBtn.classList.toggle('autodir', !!p && autoFlip);
   langBtn.title = !p
@@ -2139,7 +2213,7 @@ function renderLangUI(){
       +(LANG_NAMES[activeSrc]||activeSrc)+' and translating into '
       +(LANG_NAMES[otherSide(activeSrc)]||otherSide(activeSrc))
       +(autoFlip ? ' — Auto is following the speaker, so this can change by itself.'
-                 : ' — direction is manual; press Swap to change it.');
+                 : ' — direction is manual; press Swap to change it, or Auto to follow the speaker.');
   let stars=0;
   for(const el of langMenu.querySelectorAll('label')){
     const code=el.dataset.code, on=langs.includes(code), ok=langUsable(code);
@@ -2168,7 +2242,11 @@ function renderLangUI(){
   autoBtn.classList.toggle('on',autoFlip&&!!p);
   autoBtn.setAttribute('aria-pressed',autoFlip?'true':'false');
   swapBtn.title=p ? 'Swap the spoken language (now '+(LANG_NAMES[activeSrc]||activeSrc)+').'
+      +(autoFlip?' This turns Auto off.':'')
       : 'Tick a second language to swap direction.';
+  autoBtn.title=!p ? 'Tick a second language to follow the speaker.'
+    : autoFlip ? 'Auto: Áron flips the direction when the speaker changes language. Tap to turn it off.'
+    : 'Auto is off: only Swap flips the direction. Tap to follow the speaker again.';
 }
 function buildLangMenu(){
   langMenu.innerHTML='<div class="hint">Tick one to translate everything into it. '
@@ -2401,15 +2479,15 @@ function renderModeUI(){
   modeInd.title=(held
       ? 'Muted: the pipeline is held and costs nothing. Click to unmute (1).'
       : 'Mic on: the full pipeline is running. Click to mute it, e.g. for music (2).')
-    +(!gates?'':micManual?'\nManual: '+gates+' leave it to you. Tap Auto (3) to hand it back.'
-      :'\nAuto: '+gates+' move it. A click sets it yourself and switches to Manual.');
+    +(!gates?'':micManual?'\nAuto is off: '+gates+' leave it to you. Tap Auto (3) to hand it back.'
+      :'\nAuto: '+gates+' move it. A click sets it yourself and turns Auto off.');
   micAutoBtn.hidden=!gates;
-  micAutoBtn.textContent=micManual?'Manual':'Auto';
-  micAutoBtn.classList.toggle('manual',micManual);
+  $('micSplit').classList.toggle('solo',!gates);
+  micAutoBtn.classList.toggle('on',!micManual);
   micAutoBtn.setAttribute('aria-pressed',micManual?'false':'true');
   micAutoBtn.title=micManual
-    ? 'Manual: you move the Mic; '+gates+' only watch. Tap to go back to Auto (3).'
-    : 'Auto: '+gates+' move the Mic. Tap to take it yourself (Manual).';
+    ? 'Auto is off: you move the Mic; '+gates+' only watch. Tap to hand it back (3).'
+    : 'Auto: '+gates+' move the Mic. Muting or unmuting it yourself turns Auto off.';
   autoModeBox.checked=autoMode; autoPrayerBox.checked=autoPrayer;
   renderLights();
 }
@@ -2425,8 +2503,9 @@ function renderHearChip(){
   const prayer=pg.score!=null && pg.score<PG_ON;
   if(listening && serviceMode==='singing' && modeByDetector===true){ label='Music'; holding=true; why='Gate music is muting the mic for music.'; }
   else if(listening && serviceMode==='prayer'){ label='Prayer'; holding=true; why='Gate prayer is muting the mic for communal prayer.'; }
-  else if(listening && music){ label='Music?'; why=micManual&&autoMode?'Music heard. The Mic is on Manual, so Gate music leaves it: tap Auto to let it mute.':autoMode?'Music heard: Gate music mutes the mic if it lasts.':'Music heard. Gate music is off, so the mic stays on.'; }
-  else if(listening && prayer){ label='Prayer?'; why=micManual&&autoPrayer?'Communal prayer heard. The Mic is on Manual, so Gate prayer leaves it: tap Auto to let it mute.':autoPrayer?'Communal prayer heard: Gate prayer mutes the mic if it lasts.':'Communal prayer heard. Gate prayer is off, so the mic stays on.'; }
+  else if(listening && music){ label='Music?'; why=micManual&&autoMode?'Music heard. The Mic\'s Auto is off, so Gate music leaves it: tap Auto to let it mute.':autoMode?'Music heard: Gate music mutes the mic if it lasts.':'Music heard. Gate music is off, so the mic stays on.'; }
+  else if(listening && prayer){ label='Prayer?'; why=micManual&&autoPrayer?'Communal prayer heard. The Mic\'s Auto is off, so Gate prayer leaves it: tap Auto to let it mute.':autoPrayer?'Communal prayer heard: Gate prayer mutes the mic if it lasts.':'Communal prayer heard. Gate prayer is off, so the mic stays on.'; }
+  else if(speakerHeldBack()){ label='Speech'; why='One voice is speaking and the Mic is muted by hand: tap the Mic (1) to unmute.'; }
   else if(listening){ label='Speech'; why='Neither music nor communal prayer heard.'; }
   if(hearChip.textContent!==label) hearChip.textContent=label;
   hearChip.hidden=!label;
@@ -2438,6 +2517,13 @@ function renderHearChip(){
   if(nudge!==micAutoBtn.classList.contains('nudge')){
     micAutoBtn.classList.toggle('nudge',nudge);
     if(nudge) log('info','Mic is on Manual and '+(music?'music':'communal prayer')+' is playing — tap Auto to let the Gate mute it');
+  }
+  // The other way round: muted by hand and someone has started speaking. The Mic
+  // pulses, so a mute left on after the song doesn't hold the preacher back.
+  const held=speakerHeldBack();
+  if(held!==modeInd.classList.contains('nudge')){
+    modeInd.classList.toggle('nudge',held);
+    if(held){ log('info','Someone is speaking and the Mic is muted by hand — tap the Mic (1) to unmute'); jEvent('held_back',{}); }
   }
 }
 micAutoBtn.addEventListener('click',()=>{ micManual?micToAuto():micToManual(); micAutoBtn.blur(); });
@@ -2758,6 +2844,7 @@ async function loadCaps(){
   buildLangMenu();
   renderEars(); syncEarsUI();
   elWrap.classList.toggle('hide', !caps.tts);
+  reflectKnobs();                                  // Sentence wait starts at the server's delay
   // The line hold defaults to the server's CT_PROJECTOR_DWELL_MS until the
   // operator has chosen one here; either way the store learns the pace now, so
   // a projector opened later (or on another machine) starts with it.
@@ -2863,10 +2950,10 @@ function saveSettings(){
            // itself deliberately does not -- see setServiceMode.
            autoMode,autoPrayer,attendant,
            model:modelSel.value,
-           speed:speedEl.value,
+           speed:speedEl.value,voiceDelay:delayEl.dataset.saved?delayEl.value:null,
            elVoice:elVoice.value,ttsOut:ttsOutSel.value,
            ears:earsWanted,
-           ttsProv:ttsProv.value,sxVoice:sxVoice.value,
+           ttsProv:ttsProv.value,sxVoice:sxVoice.value,exprTags:exprTags.checked,
            cloneAccent:cloneAccent.checked,cloneStrength:cloneStrength.value,
            rec:recBox.checked,recAuto:recAutoBox.checked};
   localStorage.setItem('ct_settings',JSON.stringify(s));
@@ -2943,11 +3030,13 @@ function loadSettings(){
   if(typeof s.model==='string' && s.model.endsWith('+hears')){ s.model=s.model.slice(0,-6); s.hear=true; }
   if(s.model){ modelSel.dataset.want=s.model; modelSel.value=s.model; }
   if(s.speed!=null)speedEl.value=s.speed;
+  if(s.voiceDelay!=null){ delayEl.value=s.voiceDelay; delayEl.dataset.saved='1'; }
   if(s.elVoice!=null)elVoice.dataset.want=s.elVoice;
   if(Array.isArray(s.ears))earsWanted=s.ears;
   // the first build's single ElevenLabs switch
   if(s.ear2) earsWanted=['elevenlabs'];
   if(s.ttsOut!=null)ttsOutSel.dataset.want=s.ttsOut;
+  if(s.exprTags!=null)exprTags.checked=!!s.exprTags;
   // Stashed rather than applied: whether clips are kept is the SERVER's state,
   // and /caps reports it -- these say what this operator last chose, and are
   // pushed back there only if they disagree (see loadCaps).
@@ -2969,10 +3058,18 @@ function reflectKnobs(){
   gainV.textContent=(gainEl.value>0?'+':'')+gainEl.value+' dB';
   renderPaceSeg();
   speedV.textContent=(speedEl.value/100).toFixed(2)+'×';
+  if(!delayEl.dataset.saved&&caps&&caps.voice_delay_s!=null) delayEl.value=Math.min(12,Math.max(6,caps.voice_delay_s));
+  const wait=voiceDelayS();
+  $('delayV').textContent=wait+' s';
+  $('delayHelp').textContent=voiceStyled()&&+delayEl.value<STYLED_MIN_S
+    ? 'Expression tags need about 2 s to style each clip, so the voice waits '+wait+' s.'
+    : 'Longer: more whole sentences, further behind him.';
   placeMeterZones();                                   // move the threshold line/zone live as you drag
 }
 [gainEl,paceEl].forEach(el=>el.addEventListener('input',()=>{reflectKnobs();applyLiveKnobs();saveSettings();}));
 [speedEl].forEach(el=>el.addEventListener('input',()=>{reflectKnobs();saveSettings();}));
+delayEl.addEventListener('input',()=>{ delayEl.dataset.saved='1'; reflectKnobs(); saveSettings(); });
+exprTags.addEventListener('change',reflectKnobs);
 // Pace as three stops; the hidden #pace keeps the stop's index into PACE. The
 // Soniox stop (0) left the menu 2026-10-29: the Decision Router follows Soniox's
 // own segments anyway (see syncCutLock).
@@ -3031,7 +3128,7 @@ function renderStrip(){
   $('wallInfo').textContent=optText(wallLines)+', '+optText(wallWps);
 }
 [ttsBox,modelSel,elVoice,ttsOutSel,
- sxVoice,cloneStrength].forEach(el=>el.addEventListener('change',saveSettings));
+ sxVoice,cloneStrength,exprTags].forEach(el=>el.addEventListener('change',saveSettings));
 // The streaming player routes its output once, at creation, so a device change
 // has to be pushed to the live element -- there is no next clip to pick it up.
 ttsOutSel.addEventListener('change',rerouteAudioOut);
@@ -3928,7 +4025,7 @@ function pgReset(){
   const band=[pgBiquad('hp',300,0.707),pgBiquad('hp',300,0.707),pgBiquad('lp',3400,0.707),pgBiquad('lp',3400,0.707)];
   const envLp=[pgBiquad('lp',20,0.707),pgBiquad('lp',20,0.707)];
   pg={band,envLp,raw:new Float32Array(PG_WIN),rw:0,filled:0,env:new Float32Array(PG_WIN/PG_ENV_DS),ew:0,
-      envN:0,acc:0,accN:0,since:0,hist:[],score:null,fast:null,feat:null,onSince:0,offN:0,levels:[],tops:[],clear:false,back:false};
+      envN:0,acc:0,accN:0,since:0,hist:[],score:null,fast:null,feat:null,onSince:0,offN:0,levels:[],tops:[],clear:false,back:false,voiceN:0,speaker:false};
 }
 pgReset();
 function pgFeed(frame,sampleRate){
@@ -4157,6 +4254,12 @@ function mdDecide(now){
 // comes before the anti-strobe guard: a speaker never waits. The guard still spaces
 // out the holds, so a mistaken release can't strobe.
 function pgDecide(now){
+  // One voice, window by window (pg.clear: the release's own test, so a sermon
+  // passes it and a room praying or singing does not). Three in a row, net of the
+  // windows without, and a speaker is talking; it lasts until the count runs out,
+  // so the pauses between his sentences don't switch it off.
+  pg.voiceN=pg.clear&&!musicHeard() ? Math.min(SPEAKER_N,pg.voiceN+1) : Math.max(0,pg.voiceN-1);
+  if(pg.voiceN>=SPEAKER_N) pg.speaker=true; else if(!pg.voiceN) pg.speaker=false;
   renderHearChip();
   if(pg.score!=null && pg.score<PG_ON && !pg.clear){ if(!pg.onSince) pg.onSince=now; } else pg.onSince=0;
   pg.offN=(pg.fast!=null && pg.fast>PG_OFF) ? pg.offN+1 : 0;
@@ -4170,6 +4273,11 @@ function pgDecide(now){
   if(serviceMode==='speaking' && pg.onSince && now-pg.onSince>=PG_ON_MS && !musicHeard())
     setServiceMode('prayer','communal prayer, score '+pg.score.toFixed(2),'prayer');
 }
+// A speaker is talking and a mute the operator placed is holding him back: the
+// Gates never lift that one (Manual, or no Gate on), so the Mic shows it. A
+// Gate's own mute is left alone: it lets go by itself when he speaks.
+const SPEAKER_N=3;
+function speakerHeldBack(){ return listening && !translatingNow() && modeByDetector===false && pg.speaker; }
 function pgRenderDiag(){
   if(!diagOpen) return;
   const f=x=>x==null?' —  ':x.toFixed(2);
@@ -4651,50 +4759,67 @@ function applySeam(next, tgt){
 // 2026-10-18 service the wall had openers never closed (a choir line, a hymn),
 // closers with nothing to close ("…more like Christ." Amen?) and both styles
 // side by side (validation/results/2026-10-18-readability). So, on every
-// caption before it is shown: one style per language (“…” English, „…”
-// Romanian), a closer with nothing open is dropped, and an opener still waiting
+// caption before it is shown: one style per language (Q_STYLE), a closer with
+// nothing open is dropped, and an opener still waiting
 // after Q_MAX_WORDS words -- longer than any verse a preacher quotes in one
 // breath (Revelation 3:15-16 ran 45) -- is taken back out of the line that
 // opened it. That last is the only change to a line already on the wall, and
 // it removes one mark: no word ever moves.
 const Q_MAX_WORDS=60;
+// Each language's own quotation marks, opener then closer; any other takes
+// English “…”. Where the opener is the low „, a “ closes (German „…“).
+const Q_STYLE={ro:'„”',pl:'„”',hu:'„”', de:'„“',cs:'„“',sk:'„“',bg:'„“',
+  fr:'«»',es:'«»',it:'«»',ca:'«»',ru:'«»',uk:'«»',el:'«»',no:'«»', ja:'「」','zh-hant':'「」'};
+const Q_MARKS='"“”„«»「」';
+function qStyle(tgt){
+  const s=Q_STYLE[tgt]||'“”';
+  return {open:s[0],close:s[1],low:s[0]==='„',re:new RegExp(s[0],'g')};
+}
 let qOpen=null;     // {el, segId, tgt, n, words}: the n-th opener of that caption still waits for its closer
-function quoteTakeBack(o){
-  if(!o.el || !o.el.isConnected || wallDead(o.segId)) return;
-  const node=[...o.el.childNodes].find(n=>n.nodeType===3); if(!node) return;
-  let k=-1;
-  const fixed=node.nodeValue.replace(/[“„]/g,m=>(++k===o.n)?'':m).replace(/\s{2,}/g,' ').trim();
-  if(fixed===node.nodeValue.trim()) return;
+// A caption already on the wall, changed in place (one mark at a time) on the
+// projector and the website too. -> whether anything changed.
+function quoteEdit(el,segId,fn){
+  if(!el || !el.isConnected || wallDead(segId)) return false;
+  const node=[...el.childNodes].find(n=>n.nodeType===3); if(!node) return false;
+  const fixed=fn(node.nodeValue).replace(/\s{2,}/g,' ').trim();
+  if(fixed===node.nodeValue.trim()) return false;
   node.nodeValue=fixed;
-  castSeg(o.segId,fixed,true); publishSeg(o.segId,fixed,true);
-  log('info','quote: took back an opening mark that was never closed');
+  castSeg(segId,fixed,true); publishSeg(segId,fixed,true);
+  return true;
+}
+function quoteTakeBack(o){
+  let k=-1;
+  if(quoteEdit(o.el,o.segId,t=>t.replace(qStyle(o.tgt).re,m=>(++k===o.n)?'':m)))
+    log('info','quote: took back an opening mark that was never closed');
 }
 // -> the caption as it should be shown. Openers it leaves waiting are bound to
-// its row by quoteBind once that exists.
-let qPendingN=-1;
+// its row by quoteBind once that exists; qShut is which of its closers (by
+// index among them) closed the quotation an earlier caption left open, or -1.
+let qPendingN=-1, qShut=-1;
 function quoteFix(text,tgt){
-  qPendingN=-1;
+  qPendingN=-1; qShut=-1;
   if(!text) return text;
   if(qOpen && qOpen.tgt!==tgt){ quoteTakeBack(qOpen); qOpen=null; }   // the direction flipped mid-quote
-  const OPEN=tgt==='ro'?'„':'“';
+  const st=qStyle(tgt), OPEN=st.open;
   let out='', opened=0, here=-1;           // here: index (among this caption's openers) of one still open
   const chars=[...text];
   for(let j=0;j<chars.length;j++){
     const ch=chars[j];
-    if(!'"“”„«»'.includes(ch)){ out+=ch; continue; }
+    if(!Q_MARKS.includes(ch)){ out+=ch; continue; }
     const prev=j?chars[j-1]:' ', next=chars[j+1]||' ';
-    const isOpen = ch==='„'||ch==='«' ||
-      (ch==='“' && !((qOpen||here>=0) && (tgt==='ro' || /[\s.,;:!?]/.test(next)))) ||
+    const isOpen = ch==='„'||ch==='«'||ch==='「' ||
+      (ch==='“' && !(/\S/.test(prev) && /[\s.,;:!?]/.test(next))          // after a word, before a gap: German „…“'s closer
+                && !((qOpen||here>=0) && (st.low || /[\s.,;:!?]/.test(next)))) ||
       (ch==='"' && /[\s(\[—–:]/.test(prev) && !/[\s.,;:!?]/.test(next));
     if(isOpen){
-      if(here>=0){ let k=-1; out=out.replace(/[“„]/g,m=>(++k===here)?'':m); opened--; here=-1; }
+      if(here>=0){ let k=-1; out=out.replace(st.re,m=>(++k===here)?'':m); opened--; here=-1; }
       else if(qOpen){ quoteTakeBack(qOpen); qOpen=null; }
       here=opened++; out+=OPEN;
     }else{
       if(here>=0) here=-1;
-      else if(qOpen) qOpen=null;
+      else if(qOpen){ qOpen=null; qShut=out.split(st.close).length-1; }
       else continue;                       // nothing to close
-      out+='”';
+      out+=st.close;
     }
   }
   out=out.replace(/\s{2,}/g,' ').trim();
@@ -4705,10 +4830,88 @@ function quoteFix(text,tgt){
 }
 function quoteBind(el,segId,tgt,text){
   if(qPendingN<0) return;
-  const tail=text.slice(text.split(/[“„]/).slice(0,qPendingN+1).join('x').length);
+  const tail=text.slice(text.split(qStyle(tgt).open).slice(0,qPendingN+1).join('x').length);
   qOpen={el,segId,tgt,n:qPendingN,words:(tail.match(/\S+/g)||[]).length};
   qPendingN=-1;
   if(qOpen.words>Q_MAX_WORDS){ quoteTakeBack(qOpen); qOpen=null; }
+}
+// Where a caption's quotation marks reach past it, as indexes into it (-1:
+// none): the first opener it leaves open and the first closer with nothing
+// before it to close. Marks are read as quoteFix reads them (`low`: a “ after
+// an opener closes it, as in German „…“).
+function quoteEnds(text,low){
+  const open=[]; let close=-1;
+  for(let j=0;j<text.length;j++){
+    const ch=text[j]; if(!Q_MARKS.includes(ch)) continue;
+    const prev=j?text[j-1]:' ', next=text[j+1]||' ';
+    const isOpen = ch==='„'||ch==='«'||ch==='「' ||
+      (ch==='“' && !(/\S/.test(prev) && /[\s.,;:!?]/.test(next))
+                && !(open.length && (low || /[\s.,;:!?]/.test(next)))) ||
+      (ch==='"' && /[\s(\[—–:]/.test(prev) && !/[\s.,;:!?]/.test(next));
+    if(isOpen) open.push(j);
+    else if(open.length) open.pop();
+    else if(close<0) close=j;
+  }
+  return {open:open.length?open[0]:-1, close};
+}
+// The Router's translator writes one caption in five (2026-11-15: 460 of 2,436)
+// and its prompt has it place quotation marks by meaning, but it cannot see the
+// next caption, which Soniox mostly writes with the recogniser's marks. That day
+// it opened or closed a quotation mid-way four times -- the real opener then
+// taken back, or the real closer dropped with nothing left to close -- and once
+// dropped the closer of a hymn verse, which then stayed open for 60 words. So a
+// mark of its that reaches past the caption must be one the source line has:
+// one the source lacks is taken out, and the source's closer at the end of the
+// line is put back. A quotation it opens and closes inside the caption stays.
+function quoteFollowSource(text,src,tgt){
+  if(!text || src==null) return text;
+  const s=quoteEnds(String(src),false), t=quoteEnds(text,qStyle(tgt).low);
+  let out=text;
+  const cut=[t.open>=0&&s.open<0?t.open:-1, t.close>=0&&s.close<0?t.close:-1].filter(i=>i>=0);
+  for(const i of cut.sort((a,b)=>b-a)) out=out.slice(0,i)+out.slice(i+1);
+  if(s.close>=0 && t.close<0 && !/[\p{L}\p{N}]/u.test(String(src).slice(s.close+1)) && !/[”“»」"]\s*$/.test(out))
+    out=out.replace(/\s+$/,'')+'”';                                // quoteFix turns it into the language's own
+  return out.replace(/\s{2,}/g,' ').trim();
+}
+// ---- the quotation judge, one caption later ----------------------------------
+// The recogniser opens a quotation at every "X spune:" and often closes it one
+// to four captions late, over the preacher's own words (13 on the wall on
+// 2026-11-15, nine of them Bible passages). So while a quotation is open, each
+// caption that reaches the wall still inside it -- or closing it -- goes to Luna
+// (/quote-check: router_gate.quote_check) with the captions since the opener: is
+// it still the quoted words? When not, the quotation ended with the caption
+// before: that one gets the closing mark, and this one loses the closer it may
+// carry. Only those marks move, on the two newest captions, and only while no
+// newer caption is up. CT_QUOTE_JUDGE: on; log (ask, and note the answer in the
+// session record only); off.
+function quoteAsk(o,prev,cell,segId,lang,shut){
+  const mode=caps.quote_judge;
+  if(!mode || mode==='off' || !prev || prev.tgt!==lang || !o.el || !o.el.j || !cell.j) return;
+  const rows=J.rows, a=rows.indexOf(o.el.j), z=rows.indexOf(cell.j);
+  if(a<0 || z<=a) return;
+  const mine=r=>r && r.tgt && r.lang===lang, lines=[];
+  for(let i=a-1;i>=0&&lines.length<3;i--) if(mine(rows[i])) lines.unshift(rows[i]);
+  const at=lines.length;
+  for(let i=a;i<=z;i++) if(i===a || i===z || mine(rows[i])) lines.push(rows[i]);
+  const ctl=new AbortController(), cap=setTimeout(()=>ctl.abort(),3000);
+  fetch('/quote-check',{method:'POST',headers:{'Content-Type':'application/json'},signal:ctl.signal,
+    body:JSON.stringify({lines:lines.map(r=>({ro:r.src||'',en:r.tgt})),at})})
+    .then(r=>r.json()).then(d=>{
+      if(!d || typeof d.qin!=='number') return;
+      const q=cell.j.quote={qin:+d.qin.toFixed(2),act:d.act||'',ms:d.ms}; J.dirty=true;
+      if(d.act!=='close') return;
+      if(mode!=='on'){ log('info','quote judge (log only): the quotation ended on the caption before ('+q.qin+')'); return; }
+      if(!lastCap || lastCap.el!==cell){ q.late=true; return; }       // a newer caption is up: leave it
+      quoteCloseBack(o,prev,cell,segId,shut,q.qin); q.done=true;
+    }).catch(()=>{}).finally(()=>clearTimeout(cap));
+}
+function quoteCloseBack(o,prev,cell,segId,shut,qin){
+  const st=qStyle(o.tgt), pn=prev.el && [...prev.el.childNodes].find(n=>n.nodeType===3);
+  if(pn && pn.nodeValue.trim().endsWith(st.open)) quoteTakeBack(o);   // it only opened there: nothing quoted yet
+  else quoteEdit(prev.el,prev.segId,t=>t.trim().endsWith(st.close)?t:t.replace(/\s+$/,'')+st.close);
+  if(shut>=0){ let k=-1; quoteEdit(cell,segId,t=>t.split(st.close).map((x,i,a)=>i<a.length-1?x+(++k===shut?'':st.close):x).join('')); }
+  if(qOpen===o) qOpen=null;
+  log('info','quote: closed on the caption before -- the newest is the preacher\'s own words ('+qin+')');
 }
 // ---- Soniox's own translation keeps the hesitations --------------------------
 // "Uh, he comes to see me", "from Oxville, uh." -- about one per 100 words with
@@ -5486,6 +5689,7 @@ function nvCommit(k){       // commit pairs 0..k: their translation as one capti
   nvShow(text,cell,spoken,nvLang||(langs&&langs[0])||'en','soniox');
 }
 function nvShow(text,cell,spoken,lang,why,by){   // one caption to the wall, the voice and every output
+  const qWas=qOpen&&qOpen.tgt===lang?qOpen:null, prevCap=lastCap;   // a quotation this caption may go on with
   text=quoteFix(text,lang);
   setTgtLine(cell,text,'',null,1);
   jDone(cell,{tgt:text,by:by||'Soniox',why,lang,spoken});
@@ -5496,6 +5700,7 @@ function nvShow(text,cell,spoken,lang,why,by){   // one caption to the wall, the
   // continues the sentence Soniox's line before it closed.
   applySeam(text,lang); lastCap={el:cell,segId,tgt:lang};
   quoteBind(cell,segId,lang,text);
+  if(qWas && (qOpen===qWas || qShut>=0)) quoteAsk(qWas,prevCap,cell,segId,lang,qShut);
   inkSeg(segId,spoken); inkLanded(segId,text);
   segCount++; noteReason(why);
   log('info',(why==='soniox'?'Soniox':'Router → '+why)+' caption ['+text.length+'c] '+text.slice(0,60));
@@ -5524,7 +5729,8 @@ function routerCommit(ro,en,cell,spoken,span,lang,seq,conf){
   const mine={ro,en};
   routerCtx.push(mine); if(routerCtx.length>ROUTER_CTX) routerCtx.shift();
   const t0=performance.now();                    // Soniox's segment final: the hold runs from here to the caption
-  const check=routerCheck(ro,en,ctx,conf);      // starts now, in parallel with any caption still ahead
+  const srcLang=(cell.j&&cell.j.src_lang)||(sessionPair()||[]).find(c=>c!==lang)||'';   // the Router's questions name both
+  const check=routerCheck(ro,en,ctx,conf,lang,srcLang); // starts now, in parallel with any caption still ahead
   routerChain=routerChain.then(async()=>{
     let d=await check;
     if(!d) d=unsureStandIn(conf);                // no answer in time: a low word still sends it on
@@ -5536,7 +5742,7 @@ function routerCommit(ro,en,cell,spoken,span,lang,seq,conf){
       if(clues.readings) RT.earAsk++;
       const res=await routerTranslate(ro,lang,model,{en,why:d.why},span,clues,conf), t=res&&res.text;
       if(res&&res.ears){ RT.earGot++; if(seq) showEarsUsed(seq,res.ears); }
-      if(t){ text=t; why='router-'+(d.why||'translation'); by=model;
+      if(t){ text=quoteFollowSource(t,ro,lang); why='router-'+(d.why||'translation'); by=model;
              log('info','Router → '+model+': '+t.slice(0,60)+(res.ears?' (with an ear\'s reading)':'')); }
       else { RT.mtFail++; log('warn','Router: translator failed or slow, Soniox kept'); }
     }
@@ -5544,7 +5750,7 @@ function routerCommit(ro,en,cell,spoken,span,lang,seq,conf){
     if(cell.j){
       cell.j.hold_ms=Math.round(performance.now()-t0);
       cell.j.route=d&&d.standin?{timeout:true,low:d.low,sent:true,why:d.why}
-        :d?{bad:d.bad,sens:d.sens,sl:d.sl,low:d.low,ms:d.ms,sent:!!d.route,why:d.why||''}:{timeout:true};
+        :d?{bad:d.bad,sens:d.sens,sl:d.sl,div:d.div,low:d.low,ms:d.ms,sent:!!d.route,why:d.why||''}:{timeout:true};
       if(d&&d.route&&why==='soniox') cell.j.route.kept='translator failed or slow';
       if(why!=='soniox') cell.j.soniox_en=en;
     }
@@ -5552,7 +5758,7 @@ function routerCommit(ro,en,cell,spoken,span,lang,seq,conf){
       body:JSON.stringify({src:ro,tgt:en,target_lang:lang,...(sessionPair()?{pair:sessionPair()}:{})})}).catch(()=>{});
     else mine.en=text;
     if(d&&d.standin) log('info','Router: no answer in time, word at '+d.low.toFixed(2)+' → misheard');
-    else if(d) log('info','Router '+d.ms+'ms bad '+(d.bad==null?'-':d.bad.toFixed(2))+' sens '+(d.sens==null?'-':d.sens.toFixed(2))+' sl '+(d.sl==null?'-':d.sl.toFixed(2))+' low '+(d.low==null?'-':d.low.toFixed(2))
+    else if(d) log('info','Router '+d.ms+'ms bad '+(d.bad==null?'-':d.bad.toFixed(2))+' sens '+(d.sens==null?'-':d.sens.toFixed(2))+' sl '+(d.sl==null?'-':d.sl.toFixed(2))+' div '+(d.div==null?'-':d.div.toFixed(2))+' low '+(d.low==null?'-':d.low.toFixed(2))
               +(d.route?' → '+d.why+(why==='soniox'?' (kept)':''):''));
     nvShow(text,cell,spoken,lang,why,by);
   }).catch(e=>{ log('warn','Router: '+e.message); noteLat('route_hold',performance.now()-t0);
@@ -5564,14 +5770,14 @@ function unsureStandIn(conf){
   const low=Math.min(...cs);
   return low<bar ? {route:true,why:'misheard',low,bad:null,sens:null,sl:null,ms:null,standin:true} : null;
 }
-async function routerCheck(ro,en,ctx,conf){
+async function routerCheck(ro,en,ctx,conf,lang,srcLang){
   if(!ro) return null;
   const ctl=new AbortController(), t0=performance.now();
   const cap=setTimeout(()=>ctl.abort(), +caps.router_timeout_ms||1200);
   RT.checks++;
   try{
     const r=await fetch('/route',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ro,en,ctx,...(conf&&conf.length?{conf}:{})}),signal:ctl.signal});
+      body:JSON.stringify({ro,en,ctx,lang,src_lang:srcLang,...(conf&&conf.length?{conf}:{})}),signal:ctl.signal});
     const d=await r.json(); noteLat('route',performance.now()-t0);
     if(typeof d.ms==='number') noteLat('route_srv',d.ms);   // the OpenAI calls alone, timed on the server
     return d;
@@ -5631,11 +5837,11 @@ async function routerTranslate(text,lang,model,flagged,span,clues,conf){
 // translation batch's, and always closed.
 async function speakCaption(text,el,segId,lang){
   if(!(ttsBox.checked && caps.tts && voiceCan(lang))){ if(caps.tts && voiceCan(lang)) addReplay(el,text,[],lang); return; }
-  const ticket=openAudioTicket(el);
+  const ticket=openAudioTicket(el,el&&el.j&&el.j.spoke);
   const clips=[]; let parts=[], clipText='';
   try{
     const r=await fetch('/speak-stream',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({text,target_lang:lang,...ttsParams()})});
+      body:JSON.stringify({text,target_lang:lang,...ttsParams(),voice_due_s:voiceDueS(el&&el.j&&el.j.spoke)})});
     if(!r.ok || !r.body) throw new Error('HTTP '+r.status);
     const reader=r.body.getReader(), decoder=new TextDecoder();
     let buf='';
@@ -5650,7 +5856,7 @@ async function speakCaption(text,el,segId,lang){
         const msg=JSON.parse(line);
         if(msg.type==='audio_chunk'){
           if(msg.ttfb_ms!=null){ noteLat('tts',msg.ttfb_ms); noteLat('tts_queue',msg.queue_ms||0); }
-          audioSlice(ticket,msg.data,msg.last);
+          audioSlice(ticket,msg.data,msg.last,msg.text);
           if(msg.text!=null) clipText=msg.text;
           if(msg.data) parts.push(b64Bytes(msg.data));
           if(msg.last&&parts.length){
@@ -6263,8 +6469,10 @@ async function pumpTranslate(){
     holdsGate=false; translating=false; inFlightSince=0;
   };
   // Taken before the request goes out, so tickets are ordered by dispatch rather
-  // than by whose audio happens to arrive first.
-  const ticket=openAudioTicket(el);
+  // than by whose audio happens to arrive first. It carries when the preacher
+  // said the batch's first word, which the clauses voice sits behind.
+  const firstWord=Math.min(...batch.flatMap(b=>b.spoken||[]).filter(x=>x!=null));
+  const ticket=openAudioTicket(el,isFinite(firstWord)?firstWord:0);
   try{
     const r=await fetch('/translate',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({text,target_lang:batchTgt,model,tts:wantTTS,
@@ -6273,7 +6481,7 @@ async function pumpTranslate(){
         ...(hearOn()?{hear:true}:{}),
         ...earClueFields(batch.map(b=>b.srcSeq)),
         ...(audio && (hearOn() || readingsOn())?{audio}:{}),
-        ...ttsParams()}),signal:ctl.signal});
+        ...ttsParams(),voice_due_s:voiceDueS(isFinite(firstWord)?firstWord:0)}),signal:ctl.signal});
     if(!r.ok || !r.body) throw new Error('HTTP '+r.status);
     // NDJSON stream: {delta} appends to the caption as Claude generates it,
     // {audio_chunk} enqueues one already-complete clip (per-sentence, so
@@ -6315,7 +6523,7 @@ async function pumpTranslate(){
           // …but end-to-end is per BATCH, and only the first clip counts: it is
           // the moment the room stops waiting.
           if(!sawAudio){ sawAudio=true; if(spokeAt) noteLat('e2e',performance.now()-spokeAt); }
-          audioSlice(ticket,msg.data,msg.last);   // ordered against other batches
+          audioSlice(ticket,msg.data,msg.last,msg.text);   // ordered against other batches
           // Replay needs whole clips, but audio now arrives in slices -- gather
           // a sentence's slices and mint one Blob URL when `last` closes it.
           // The seq-0 line names the sentence these bytes speak -- one sentence
@@ -6670,6 +6878,7 @@ transcript.addEventListener('click',e=>{
 //   drift > RATE2_AT  -> faster still
 //   drift > RATE3_AT  -> faster again, a last try before the text is dropped
 //   drift > DROP_AT   -> skip ahead to DROP_TO (jump toward live)
+// (The clauses voice keeps only the skip: it reads at its own steady pace, paceFor.)
 //
 // Every tier acts on the audio already in hand and nothing else. Playback lag
 // is never reported upstream: the translator does not know or care how far
@@ -6779,15 +6988,104 @@ function b64Bytes(b64){
 // produces no audio at all (Speak off, empty translation, a failed call) must
 // still close its ticket or everything behind it waits for ever -- which is why
 // closeAudioTicket is called from a `finally` and never from a success path.
-const AUQ={next:0,serving:0,held:new Map()};
-function openAudioTicket(el){
+const AUQ={next:0,serving:0,held:new Map(),timer:0,lastText:null,freeAt:0};
+function openAudioTicket(el,spokeMs){
   const t=AUQ.next++;
-  AUQ.held.set(t,{slices:[],done:false,el:el||null});
+  AUQ.held.set(t,{slices:[],done:false,el:el||null,spokeMs:spokeMs||0});
   return t;
 }
-function audioSlice(ticket,b64,last){
+// The clauses voice (caps.el_voice_mode, server voice_clauses): the server cuts
+// the voice into clips at full stops and returns each clip on the ticket of the
+// caption it began with. Each clip starts no earlier than voice_delay_s after
+// the preacher said its first word, so the voice sits a steady few seconds
+// behind him and pauses where he paused instead of wherever it ran out of words.
+// It reads at one steady pace (paceFor, below) rather than the drift ladder.
+let clauseRate=1;
+function clauseMode(){
+  const p=ttsProvider();
+  return p==='soniox' ? caps.sx_voice_mode==='clauses' : p==='elevenlabs' && caps.el_voice_mode==='clauses';
+}
+// Seconds of speech queued and not yet heard: appended, about to be, and (in the
+// clauses voice) held for its moment. mp3 at 128 kb/s, so 16 kB a second.
+function queuedAudioS(){
+  let b=0; for(const q of AU.q) b+=q.buf.length;
+  return audioDrift()+b/16000;
+}
+function heldAudioS(){
+  let b=0;
+  for(const [t,slot] of AUQ.held){ if(!slot.fed) for(const s of slot.slices) b+=(s[0]?s[0].length*0.75:0); }
+  return b/16000;
+}
+function voiceLag(){ return clauseMode()&&!fallbackMode ? queuedAudioS()+heldAudioS() : audioDrift(); }
+// How far behind him the clauses voice sits: Settings › Voice › Sentence wait
+// (6-12 s; the server's CT_VOICE_DELAY_S until it is moved). With Expression tags
+// on, at least STYLED_MIN_S, so each clip has time to be styled before its moment
+// (Haiku: 1.8-2.5 s a clip), plus any CT_VOICE_STYLE_S.
+const STYLED_MIN_S=8;
+function voiceStyled(){ return !!(exprTags&&exprTags.checked&&(caps.voice_director||'off')!=='off'); }
+function voiceDelayS(){
+  const base=delayEl&&delayEl.dataset.saved ? +delayEl.value : (caps.voice_delay_s??12);
+  return voiceStyled() ? Math.max(base,STYLED_MIN_S)+(caps.voice_style_s??0) : base;
+}
+// Seconds until a caption's moment (his first word + the delay): sent with it, so
+// the server knows how long its clip may wait for the director without being late.
+function voiceDueS(spokeMs){
+  return clauseMode()&&spokeMs ? +((spokeMs+voiceDelayS()*1000-epochNow())/1000).toFixed(2) : null;
+}
+// True while a ticket's first slice must wait for its moment (re-checked at
+// least every second, since what is queued ahead of it keeps playing out).
+// A clip that carries on the sentence the voice has just been speaking (the one
+// before it ended without a full stop: cut at a comma when its moment came)
+// follows straight on, if it is here while the voice still speaks or within
+// FOLLOW_MS of it falling silent, instead of waiting for its own moment: the
+// gap was a pause in the middle of a sentence (2026-11-20). It keeps the pace.
+const FOLLOW_MS=1500, SENT_END=/[.!?…。！？]["'’”“»」)\]]*\s*$/;
+function holdTicket(slot){
+  if(!clauseMode()||fallbackMode||!slot.spokeMs) return false;
+  if(AUQ.lastText!=null&&!SENT_END.test(AUQ.lastText)&&epochNow()<AUQ.freeAt+FOLLOW_MS) return false;
+  const due=slot.spokeMs+voiceDelayS()*1000;
+  const startAt=epochNow()+queuedAudioS()/Math.max(1,curRate)*1000;
+  if(startAt<due-60){
+    if(!AUQ.timer) AUQ.timer=setTimeout(()=>{ AUQ.timer=0; drainAudioTickets(); },Math.min(1000,due-startAt));
+    return true;
+  }
+  let b=0; for(const s of slot.slices) b+=(s[0]?s[0].length*0.75:0);
+  schedulePace(paceFor((startAt-due)/1000,queuedAudioS()+b/16000));
+  return false;
+}
+// The clauses voice reads at ONE pace, steered slowly. It used to read each late
+// clip 5% or 10% faster, on top of the drift ladder, which also fires inside any
+// clip longer than RATE1_AT (ElevenLabs sends audio 4-6x faster than it plays):
+// over both 15 November services, simulated whole, that changed speed about 18
+// times a minute of speech and swung between pausing and hurrying about 1,000
+// times a service. Now the pace follows how late sentences have been starting:
+// quick to rise (over PACE_UP sentences), slow to fall (PACE_DOWN), PACE_K faster
+// per second late, from 1 to PACE_MAX, in steps of at least PACE_BAND, changing
+// only where a sentence begins. Same pauses, about a twelfth of the swings
+// (validation/scripts/voice_pace_sim.py, 2026-11-21). A sentence fed with over
+// PACE_RUSH_Q s already queued (a stall upstream let several go at once) reads at
+// PACE_RUSH, so the skip (DROP_AT) stays a last resort.
+const PACE_UP=4, PACE_DOWN=20, PACE_K=0.03, PACE_MAX=1.3, PACE_BAND=0.05, PACE_RUSH_Q=15, PACE_RUSH=1.4;
+let paceLate=0, paceBase=1, paceAt=null;
+function paceFor(late,queued){
+  paceLate+=(late-paceLate)/(late>paceLate?PACE_UP:PACE_DOWN);
+  const r=+(Math.round(Math.min(PACE_MAX,Math.max(1,1+PACE_K*paceLate))/0.025)*0.025).toFixed(3);
+  if(Math.abs(r-paceBase)>=PACE_BAND-1e-6) paceBase=r;
+  return queued>PACE_RUSH_Q ? Math.max(paceBase,PACE_RUSH) : paceBase;
+}
+// The new pace starts with the sentence: when what is queued ahead of it has
+// been heard (applyDrift, on a timer for that moment), not in the middle of the
+// sentence still playing.
+function schedulePace(rate){
+  const ahead=queuedAudioS();
+  if(!AU.el||ahead<0.05){ paceAt=null; clauseRate=rate; return; }
+  paceAt={t:AU.el.currentTime+ahead,rate:rate};
+  setTimeout(applyDrift,ahead/Math.max(1,curRate)*1000+20);
+}
+function audioSlice(ticket,b64,last,text){
   const slot=AUQ.held.get(ticket);
   if(!slot) return;                      // ticket already closed and drained
+  if(text!=null) slot.text=text;         // the clip's words, on its first slice
   slot.slices.push([b64,last]);
   drainAudioTickets();
 }
@@ -6800,13 +7098,20 @@ function drainAudioTickets(){
   for(;;){
     const slot=AUQ.held.get(AUQ.serving);
     if(!slot) return;                    // nothing dispatched yet at this number
+    if(slot.slices.length&&!slot.fed&&holdTicket(slot)) return;   // clauses: not its moment yet
     while(slot.slices.length){ const s=slot.slices.shift(); slot.fed=true; enqueueAudio(s[0],s[1],slot.el); }
+    if(slot.fed){                        // when the voice will have said what it has
+      if(slot.text!=null) AUQ.lastText=slot.text;
+      AUQ.freeAt=epochNow()+queuedAudioS()/Math.max(1,curRate)*1000;
+    }
     if(!slot.done) return;               // still streaming -- hold the line
     AUQ.held.delete(AUQ.serving); AUQ.serving++;
   }
 }
 function resetAudioTickets(){            // a new listening session starts clean
-  AUQ.next=0; AUQ.serving=0; AUQ.held.clear();
+  AUQ.next=0; AUQ.serving=0; AUQ.held.clear(); AUQ.lastText=null; AUQ.freeAt=0;
+  clauseRate=1; paceLate=0; paceBase=1; paceAt=null;
+  if(AUQ.timer){ clearTimeout(AUQ.timer); AUQ.timer=0; }
   clearSpeaking();
 }
 
@@ -6922,7 +7227,8 @@ function evictBehind(hard){   // true when a removal was started
 function applyDrift(){
   if(!AU.el||fallbackMode){ reflectDrift(); return; }
   const d=audioDrift();
-  const want=driftRate(d);
+  if(paceAt&&AU.el.currentTime>=paceAt.t-0.05){ clauseRate=paceAt.rate; paceAt=null; }
+  const want=clauseMode() ? clauseRate : driftRate(d);   // the skip below still applies
   if(want!==curRate){
     // The speed-up is pitch-kept time-stretching, which can sound warbly; logged so a
     // glitch at the same moment can be told apart from a dropout.
@@ -7025,6 +7331,73 @@ function encodeWAV(samples,sampleRate){
   return new Blob([view],{type:'audio/wav'});
 }
 
+// ---- fitting the header and the ribbon to the window -----------------------
+// Half a screen is a normal place for this page, so neither row may break
+// unevenly. fitRibbon folds the ribbon one step at a time (f1-f4, see the CSS)
+// until it fits in one line with FIT_SLACK to spare, and only with every step in
+// does it let the groups wrap. fitHeader gives the lights a line of their own
+// when they would not fit beside the name, and smaller pills if they need them. Both measure the real buttons, so a
+// longer language, an extra light or another font cannot catch them out.
+// A window resize fits from scratch; a change inside (Stop for Start, the Voice
+// light, a verse pill) can only fold further, so nothing flips between its long
+// and short form mid-service.
+const FIT_SLACK=24;
+const ribbonEl=document.querySelector('.ribbon'), topEl=document.querySelector('.top');
+const RIB_STEPS=['f1','f2','f3','f4'];
+// The children's widths in one line, gaps included. Only while .measuring is on:
+// no wrapping and no shrinking, so each child shows the width it wants.
+function rowNeed(el){
+  const kids=[...el.children].filter(c=>c.getClientRects().length);
+  const gap=parseFloat(getComputedStyle(el).columnGap)||0;
+  return kids.reduce((w,c)=>w+c.getBoundingClientRect().width,0)+gap*Math.max(0,kids.length-1);
+}
+function rowRoom(el){
+  const cs=getComputedStyle(el);
+  return el.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight)-FIT_SLACK;
+}
+function fitRibbon(fresh){
+  const cl=ribbonEl.classList;
+  if(fresh) cl.remove(...RIB_STEPS);
+  cl.add('measuring');
+  const room=rowRoom(ribbonEl);
+  let k=RIB_STEPS.filter(s=>cl.contains(s)).length;
+  while(k<RIB_STEPS.length && rowNeed(ribbonEl)>room) cl.add(RIB_STEPS[k++]);
+  cl.remove('measuring');
+}
+const lightsEl=document.querySelector('.lights');
+function fitHeader(fresh){
+  const cl=topEl.classList;
+  if(fresh) cl.remove('lrow','lsm');
+  if(cl.contains('lsm')) return;
+  cl.add('measuring');
+  if(!cl.contains('lrow')){
+    if(rowNeed(topEl)<=rowRoom(topEl)){ cl.remove('measuring'); return; }
+    cl.add('lrow');
+  }
+  // On their own line: the pills' widths (#mtHealth's live inside it, unboxed).
+  const pills=[...lightsEl.querySelectorAll('.pill')].filter(c=>c.getClientRects().length);
+  const gap=parseFloat(getComputedStyle(lightsEl).columnGap)||0;
+  const need=pills.reduce((w,c)=>w+c.getBoundingClientRect().width,0)+gap*Math.max(0,pills.length-1);
+  cl.remove('measuring');
+  if(need>topEl.clientWidth-FIT_SLACK) cl.add('lsm');
+}
+function fitAll(fresh){ fitHeader(fresh); fitRibbon(fresh); }
+let fitFrame=0, fitWidth=0;
+window.addEventListener('resize',()=>{
+  if(innerWidth===fitWidth) return;
+  fitWidth=innerWidth;
+  cancelAnimationFrame(fitFrame);
+  fitFrame=requestAnimationFrame(()=>{ fitFrame=0; fitAll(true); });
+});
+// Changes inside either row. The live clock is left out: it ticks every second
+// and its digits keep one width.
+const fitWatch=new MutationObserver(recs=>{
+  if(recs.every(r=>r.target===ribbonEl || r.target===topEl || r.target.parentElement?.id==='liveClock' || r.target.id==='liveClock')) return;
+  if(!fitFrame) fitFrame=requestAnimationFrame(()=>{ fitFrame=0; fitAll(false); });
+});
+for(const el of [topEl,ribbonEl]) fitWatch.observe(el,{subtree:true,childList:true,characterData:true,
+  attributes:true,attributeFilter:['class','hidden','style']});
+
 // ---- init -----------------------------------------------------------------
 // Async only to take the server's settings first (pullServerSettings), so a new
 // browser starts on the operator's settings -- bounded to 1.5 s.
@@ -7038,7 +7411,10 @@ try { renderAttendant(); sendAttendant(); } catch(e) { console.warn('attendant',
 renderModeUI();
 placeMeterZones();
 try { refreshDevices(); } catch(e) { console.warn('refreshDevices', e); }
-try { loadCaps(); } catch(e) { console.warn('loadCaps', e); }
+try { loadCaps().finally(()=>fitAll(true)); } catch(e) { console.warn('loadCaps', e); }
+// A first fit now, and again once the fonts are in (they change every width).
+fitWidth=innerWidth; fitAll(true);
+document.fonts?.ready.then(()=>fitAll(true));
 // Warm the detector at load rather than on Start: it is 16 MB off disk and about
 // a second to compile, and paying that while the operator is pressing Start would
 // blind the first seconds of a service.

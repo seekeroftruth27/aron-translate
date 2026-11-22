@@ -46,7 +46,8 @@ KEEPALIVE_S = 10       # the socket closes after 20 s without a client message
 IDLE_CLOSE_S = 300     # no captions for this long: the service is over, hang up
 STALL_S = 12           # a clip waiting this long for any audio has been lost
 
-_SENTENCE_END = re.compile(r"[.!?…][\"'’”)\]]?\s*$")
+# a caption's own closing quotation mark (” “ » 」, app/index.html Q_STYLE) or 。！？
+_SENTENCE_END = re.compile(r"[.!?…。！？][\"'’”“»」)\]]?\s*$")
 
 
 # ---- whole mp3 frames ---------------------------------------------------------

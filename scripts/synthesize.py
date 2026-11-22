@@ -265,17 +265,19 @@ def _soniox_tts(text, voice_id, language, settings=None, model=None, fmt=AUDIO_F
 
 def _open_stream(text, el_settings=None, el_voice=None, el_model=None,
                  provider=None, sx_settings=None, sx_voice=None, sx_model=None,
-                 language=None, fmt=AUDIO_FMT, el_tag=None, el_context=None):
+                 language=None, fmt=AUDIO_FMT, el_tag=None, el_context=None, sx_tag=None):
     """Start a synthesis request and hand back the streaming Response.
 
     Defaults to ElevenLabs (CT_TTS_PROVIDER / CT_EL_VOICE). `el_voice`/`sx_voice`
     (from the UI's voice dropdown) override the env default per call. `language`
     is the target language code -- ignored by ElevenLabs, whose multilingual
-    model reads it off the text, and required by Soniox. `el_tag` is the
-    translator's delivery tag, which Soniox has no use for."""
+    model reads it off the text, and required by Soniox. `el_tag` is a delivery
+    tag for ElevenLabs; `sx_tag` one for Soniox v2, which reads "[tag]" written
+    before the words as a direction (2026-11-18: none of the Expression tags was
+    read aloud)."""
     if (provider or TTS_PROVIDER) == "soniox":
-        return _soniox_tts(text, sx_voice or SX_VOICE, language, sx_settings,
-                           sx_model, fmt)
+        return _soniox_tts(f"[{sx_tag}] {text}" if sx_tag else text, sx_voice or SX_VOICE,
+                           language, sx_settings, sx_model, fmt)
     return _elevenlabs_tts(text, el_voice or EL_VOICE, el_settings, el_model, fmt,
                            el_tag, el_context)
 

@@ -181,8 +181,10 @@ function tags(r){
     else if(x.timeout) out.push('<span class="chip">Router check timed out</span>');
     else if(x.error) out.push('<span class="chip err">Router: '+esc(x.error)+'</span>');
     const f=v=>v==null?'–':(+v).toFixed(2);
-    if(!x.timeout&&!x.error) out.push('<div class="meta">bad '+f(x.bad)+' · mis-hear '+f(x.sl)+' · cuss '+f(x.sens)+(x.ms!=null?' · '+x.ms+' ms':'')+'</div>');
+    if(!x.timeout&&!x.error) out.push('<div class="meta">bad '+f(x.bad)+' · mis-hear '+f(x.sl)+' · cuss '+f(x.sens)+(x.div!=null?' · pronoun '+f(x.div):'')+(x.ms!=null?' · '+x.ms+' ms':'')+'</div>');
   }
+  if(r.quote) out.push('<span class="chip'+(r.quote.act?' why':'')+'">quote judge: still quoted '+(+r.quote.qin).toFixed(2)
+    +(r.quote.act?(r.quote.done?' · closed on the line before':r.quote.late?' · too late to close':' · would close on the line before'):'')+'</span>');
   if(r.tag) out.push('<span class="chip">voice tag: '+esc(r.tag)+'</span>');
   if(r.batch) out.push('<span class="chip">'+r.batch+' rows in one call</span>');
   if(r.edits&&r.edits.length) out.push('<span class="chip edit">edited '+hms(r.edits[r.edits.length-1].at)+'</span>');

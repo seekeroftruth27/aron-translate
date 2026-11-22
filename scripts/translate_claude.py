@@ -177,6 +177,8 @@ FLAGGED_WHY = {
     "translation": "it may be a wrong, literal or unnatural translation",
     "sensitive": "it may hold wording that is offensive or sensitive on a church screen, so word "
                  "that part with care, faithful but decent",
+    "pronoun": "a pronoun in it that refers to God, Christ or the Spirit may be missing its "
+               "capital letter",
 }
 
 
@@ -315,6 +317,28 @@ _PAIR_NOTE = (
     "language, reproduce that part verbatim as instructed above rather than "
     "rewriting it."
 )
+
+
+# Capitals for God, by language (languages.DIVINE_CAPS / CT_DIVINE_CAPS), at
+# {divine} in the prompt: named once for every language so each language comes
+# out the same in every caption, never left to a per-caption guess (2026-11-17:
+# with "follow its own church usage" French went Te / te from one run to the next).
+_DIVINE_EXAMPLES = ('inside a quoted verse too ("God raised him from the dead" → "God raised Him from '
+                    'the dead"; "glorified be his name" → "glorified be His name"; "we thank you, Lord" → '
+                    '"we thank You, Lord")')
+
+
+def divine_note():
+    codes = [c for c in languages.divine_caps() if c in LANGUAGES]
+    if not codes:
+        return ("pronouns and possessives for God, Christ and the Spirit are written in lower case in "
+                "every language, always, even where the source or a Bible edition capitalises them.")
+    named = [f"{LANGUAGES[c]} ({languages.DIVINE_CAPS[c][0]})" if c in languages.DIVINE_CAPS
+             else LANGUAGES[c] for c in codes]
+    listed = named[0] if len(named) == 1 else ", ".join(named[:-1]) + " and " + named[-1]
+    return (f"pronouns and possessives for God, Christ and the Spirit take a capital in {listed} — "
+            f"{_DIVINE_EXAMPLES}. Every other language writes them in lower case, always, even where "
+            "the source or a Bible edition capitalises them; a script without capitals has none to place.")
 
 
 def pair_note(pair):
@@ -563,6 +587,7 @@ def build_system_prompt(prompt_file=PROMPT_FILE, glossary_file=GLOSSARY_FILE,
     note = pair_note(pair)
     prompt = prompt.replace("{pair}", note) if note \
         else re.sub(r"\{pair\}\n{0,2}", "", prompt)
+    prompt = prompt.replace("{divine}", divine_note())
     prompt = prompt.replace("{glossary}", glossary).replace("{idioms}", idioms).strip()
     return prompt + "\n\n" + VOICE_TAG_NOTE if expressive else prompt
 

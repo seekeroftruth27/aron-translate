@@ -15,6 +15,8 @@ and /v1/tts-models endpoints, ElevenLabs from its models page (the API key here
 lacks models_read). Codes are ISO 639-1 where one exists, else 639-3.
 """
 
+import os
+
 # Soniox stt-rt-v5, in the API's order (alphabetical by English name).
 HEARD = {
     "af": "Afrikaans", "sq": "Albanian", "ar": "Arabic", "az": "Azerbaijani", "eu": "Basque",
@@ -247,3 +249,44 @@ def voice_languages():
     """The VOICE table as lists, for /caps."""
     return {p: ({m: sorted(s) for m, s in v.items()} if isinstance(v, dict) else sorted(v))
             for p, v in VOICE.items()}
+
+
+# ---- capitals for God --------------------------------------------------------
+# Some languages capitalise the pronouns and possessives for God, Christ and the
+# Spirit; most don't. Captions follow the language's own custom, the same in every
+# caption: the translator's prompt names these and puts every other language in
+# lower case (translate_claude.divine_note), and the Router asks about a lower-case
+# one only in these (router_gate.DIV_Q). Chosen 2026-11-17 by the language's usual
+# church text: English is the house style (Jo, 2026-11-16); Romanian (Cornilescu),
+# Polish, Russian (Synodal), Ukrainian (Ohienko), Indonesian and Malay (their
+# spelling rules: -Nya, -Mu). Left out where the main Bibles don't (German, French,
+# Spanish, Portuguese, Italian, Hungarian, Scandinavian) or are split (Dutch: HSV
+# capitalises, NBV doesn't). CT_DIVINE_CAPS (codes, comma-separated) replaces the
+# list for a church whose custom differs; a code not below gets the rule without
+# its forms spelled out.
+# code -> (the forms, as the prompt shows them; the same in lower case, as the
+# Router looks for them: "-nya" a suffix, "l-" a clitic)
+DIVINE_CAPS = {
+    "en": ("He, Him, His, Himself; You, Your, Yours when He is addressed",
+           "he him his himself you your yours yourself"),
+    "ro": ("El, Îl, L-, Lui, Său, Sa, Săi, Sale; Tu, Te, Ție, Tău, Ta, Tale when He is addressed",
+           "el îl l- lui său sa săi sale tu te ție ţie tău ta tale tine"),
+    "pl": ("On, Jego, Go, Jemu, Mu, Nim, Niego; Ty, Ciebie, Cię, Tobie, Ci, Twój, Twoja, Twoje when He "
+           "is addressed", "on jego go jemu mu nim niego ty ciebie cię tobie ci twój twoja twoje twego twoją "
+           "twojej twoim twoich"),
+    "ru": ("Он, Его, Него, Ему, Нему, Им, Ним, Свой; Ты, Тебя, Тебе, Тобой, Твой when He is addressed",
+           "он его него ему нему им ним свой своего ты тебя тебе тобой твой твоё твое"),
+    "uk": ("Він, Його, Нього, Йому, Ним, Свій; Ти, Тебе, Тобі, Твій when He is addressed",
+           "він його нього йому ним свій свого ти тебе тобі твій твоє"),
+    "id": ("Dia, Ia, -Nya; Engkau, Kau, -Mu when He is addressed", "dia ia -nya engkau kau -mu"),
+    "ms": ("Dia, -Nya; Engkau, -Mu when He is addressed", "dia -nya engkau -mu"),
+}
+
+
+def divine_caps():
+    """The codes whose captions capitalise pronouns for God: DIVINE_CAPS, or
+    CT_DIVINE_CAPS when set."""
+    env = os.environ.get("CT_DIVINE_CAPS")
+    if env is None or not env.strip():
+        return tuple(DIVINE_CAPS)
+    return tuple(c.strip().lower() for c in env.split(",") if c.strip())
