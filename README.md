@@ -505,6 +505,8 @@ CT_PROJECTOR_DWELL_MS=1000   # hold each line this long before it scrolls up (0 
 CT_PROJECTOR_HIGHLIGHT=12    # recent sentences kept bright (12 = all/one-colour); lower to dim older ones
 CT_PROJECTOR_LATEST_ONLY=0   # 1 = keep only the current message (retires earlier sentences)
 CT_PROJECTOR_STALE_S=60      # a caption older than this is never served to a projector (0 = keep until Clear)
+CT_PUSH_WATCH_S=12           # seconds of speech with no caption stored for the projector before the server reports it (0 = off)
+CT_PUSH_WATCH_WORDS=6        # words that must be waiting for that
 ```
 
 By default the strip is a **rolling window** of the last `CT_PROJECTOR_LINES` lines:

@@ -29,6 +29,8 @@ recordings/
 # PyInstaller build artifacts
 build/
 dist/
+dist-test/
+build-test/
 
 # Local secrets (API keys). Never commit. Use .env.example as the template.
 .env

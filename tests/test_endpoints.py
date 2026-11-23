@@ -4,6 +4,7 @@ settings and sessions round-trip, and bad input is refused.
 
     python -m unittest discover -s tests -v
 """
+import json
 import unittest
 
 from support import load_server, need_flask
@@ -71,7 +72,7 @@ class Reports(Endpoints):
         self.assertEqual(usage["cost"]["total"], 0)
 
     def test_pipe_status_shape(self):
-        self.assertEqual(set(self.c.get("/pipe-status").get_json()), {"projectors", "web"})
+        self.assertEqual(set(self.c.get("/pipe-status").get_json()), {"projectors", "web", "watch"})
 
 
 class Refusals(Endpoints):
@@ -142,6 +143,133 @@ class Sessions(Endpoints):
         self.assertTrue(rec["closed"])
 
 
+class PushWatchdog(Endpoints):
+    """The server sees both ends of the push -- the words Soniox finalizes and the captions
+    /caption stores -- and reports speech that waits too long for a stored caption."""
+
+    def setUp(self):
+        self.server = load_server()
+        self.c = self.server.app.test_client()
+        s = self.server
+        s.CT_PUSH_WATCH_S, s.CT_PUSH_WATCH_WORDS = 12, 6
+        s._WD.update(since=None, words=0, open=None, episodes=[], seq=0, thread=True)  # no timer thread
+
+    def words(self, n, **kw):
+        return [dict({"text": " w%d" % i, "is_final": True}, **kw) for i in range(n)]
+
+    def test_no_episode_under_the_wait_or_the_word_count(self):
+        s = self.server
+        s._wd_speech(self.words(8), now=100)
+        s._wd_check(now=105)                       # 5 s: normal
+        self.assertIsNone(s._wd_report(now=105)["gap_s"])
+        s._wd_stream_closed(now=106)
+        s._wd_speech(self.words(3), now=200)       # too few words
+        s._wd_check(now=300)
+        self.assertEqual(s._wd_report(now=300)["episodes"], [])
+
+    def test_speech_with_no_stored_caption_opens_an_episode(self):
+        s = self.server
+        s._wd_speech(self.words(4), now=100)
+        s._wd_speech(self.words(4), now=104)
+        s._wd_check(now=113)
+        r = s._wd_report(now=113)
+        self.assertEqual(r["gap_s"], 13.0)
+        self.assertEqual(len(r["episodes"]), 1)
+        self.assertEqual(r["episodes"][0]["words"], 8)
+        self.assertIsNone(r["episodes"][0]["recovered"])
+        s._wd_check(now=120)                       # still the same episode
+        self.assertEqual(len(s._wd_report(now=120)["episodes"]), 1)
+
+    def test_a_stored_caption_closes_it_with_its_length(self):
+        s = self.server
+        s._wd_speech(self.words(8), now=100)
+        s._wd_check(now=115)
+        s._wd_caption(now=131)
+        r = s._wd_report(now=140)
+        self.assertIsNone(r["gap_s"])
+        self.assertTrue(r["episodes"][0]["recovered"])
+        self.assertEqual(r["episodes"][0]["secs"], 31.0)
+        s._wd_check(now=200)                       # nothing owed any more
+        self.assertEqual(len(s._wd_report(now=200)["episodes"]), 1)
+
+    def test_a_closed_stream_ends_the_watch(self):
+        s = self.server
+        s._wd_speech(self.words(8), now=100)
+        s._wd_stream_closed(now=105)               # muted, held for music, stopped
+        s._wd_check(now=200)
+        self.assertEqual(s._wd_report(now=200)["episodes"], [])
+        s._wd_speech(self.words(8), now=300)
+        s._wd_check(now=315)
+        s._wd_stream_closed(now=330)
+        e = s._wd_report(now=330)["episodes"][0]
+        self.assertIs(e["recovered"], False)
+        self.assertEqual(e["ended"], "the speech stream closed")
+
+    def test_only_finalized_original_words_count(self):
+        s = self.server
+        toks = (self.words(10, translation_status="translation")        # Soniox's own translation
+                + [{"text": "<end>", "is_final": True}, {"text": "<fin>", "is_final": True},
+                   {"text": " ,", "is_final": True}]                    # no letters
+                + [{"text": " draft", "is_final": False}] * 10)         # not final yet
+        s._wd_speech(toks, now=100)
+        s._wd_check(now=200)
+        self.assertEqual(s._wd_report(now=200)["episodes"], [])
+
+    def test_off_when_the_wait_is_zero(self):
+        s = self.server
+        s.CT_PUSH_WATCH_S = 0
+        s._wd_speech(self.words(20), now=100)
+        s._wd_check(now=500)
+        self.assertEqual(s._wd_report(now=500)["episodes"], [])
+
+    def test_the_caption_post_and_pipe_status_are_wired(self):
+        s = self.server
+        s._wd_speech(self.words(8), now=s.time.monotonic() - 30)
+        s._wd_check()
+        w = self.c.get("/pipe-status").get_json()["watch"]
+        self.assertIsNotNone(w["gap_s"])
+        self.c.post("/caption", json={"id": "z", "text": "Hello", "done": True})
+        w = self.c.get("/pipe-status").get_json()["watch"]
+        self.assertIsNone(w["gap_s"])
+        self.assertTrue(w["episodes"][0]["recovered"])
+        # an empty text, or a clear, is not a caption
+        s._wd_speech(self.words(8), now=s.time.monotonic() - 30)
+        s._wd_check()
+        self.c.post("/caption", json={"id": "z2", "text": "", "done": False})
+        self.c.post("/caption", json={"action": "clear"})
+        self.assertIsNotNone(self.c.get("/pipe-status").get_json()["watch"]["gap_s"])
+
+
+class PoolPermission(Endpoints):
+    """The page talks to this server at other loopback addresses (127.0.0.2 ...) so a
+    stalled request cannot hold the room's captions in line; the browser then needs the
+    server's permission to read the answers, and gives it to the page's own address only."""
+
+    def setUp(self):
+        self.server = load_server()
+        self.c = self.server.app.test_client()
+        self.own = "http://localhost:%d" % self.server.PORT
+
+    def test_the_pages_own_address_may_read_answers(self):
+        r = self.c.options("/project", headers={"Origin": self.own,
+                                                "Access-Control-Request-Method": "POST",
+                                                "Access-Control-Request-Headers": "content-type"})
+        self.assertEqual(r.headers["Access-Control-Allow-Origin"], self.own)
+        self.assertIn("POST", r.headers["Access-Control-Allow-Methods"])
+        self.assertIn("Content-Type", r.headers["Access-Control-Allow-Headers"])
+        r = self.c.get("/pipe-status", headers={"Origin": self.own})
+        self.assertEqual(r.headers["Access-Control-Allow-Origin"], self.own)
+
+    def test_another_site_gets_no_permission(self):
+        for origin in ("https://example.com", "http://localhost:1", "http://127.0.0.2:%d" % self.server.PORT):
+            r = self.c.get("/pipe-status", headers={"Origin": origin})
+            self.assertNotIn("Access-Control-Allow-Origin", r.headers, origin)
+
+    def test_a_request_without_an_origin_is_unchanged(self):
+        r = self.c.get("/pipe-status")
+        self.assertNotIn("Access-Control-Allow-Origin", r.headers)
+
+
 class CaptionStore(Endpoints):
     """/caption keeps what the networked projector polls; posts may overtake each other."""
 
@@ -164,6 +292,21 @@ class CaptionStore(Endpoints):
         self.put("a", "Hello", done=True)
         segs = self.feed()["segs"]
         self.assertEqual(segs, [{"id": "a", "text": "Hello", "done": True}])
+
+    def test_a_text_plain_post_is_read_as_the_same_json(self):
+        # The page posts from 127.0.0.1 as a no-cors text/plain request (its own
+        # connection pool, no preflight); the body is the same JSON.
+        r = self.c.post("/caption", data=json.dumps({"id": "p", "text": "Plain", "done": True, "n": 7}),
+                        headers={"Content-Type": "text/plain;charset=UTF-8"})
+        self.assertTrue(r.get_json()["ok"])
+        self.assertEqual(self.feed()["segs"], [{"id": "p", "text": "Plain", "done": True}])
+
+    def test_a_body_that_is_not_json_is_ignored(self):
+        before = self.feed()["rev"]
+        for body in ("not json", "[1,2]", ""):
+            r = self.c.post("/caption", data=body, headers={"Content-Type": "text/plain"})
+            self.assertTrue(r.get_json()["ok"])
+        self.assertEqual(self.feed()["rev"], before)
 
     def test_clear_empties_the_store_and_bumps_the_epoch(self):
         self.put("a", "x")

@@ -1205,6 +1205,80 @@ function appendLogLine(e){
 }
 function renderLog(){ diagLog.textContent=''; LOG.forEach(appendLogLine); }
 
+// ---- which requests are open ------------------------------------------------
+// The browser lets a page hold only about 6 connections to one address at a time
+// (localhost:5000); the rest wait in line. A few requests that stay open while a
+// provider stalls (the voice, a translation) can fill all six, and then a tiny
+// caption push waits behind them -- the room's projector freezes while this page
+// carries on. This counts what is open, per path, so that a slow push can say
+// what was in its way (see netCap). Wraps fetch only for requests to this server.
+const OPEN_REQ=new Map();   // id -> {path, t0}
+let openReqSeq=0;
+(function(){
+  const f=window.fetch.bind(window);
+  window.fetch=function(input,init){
+    let path='';
+    try{
+      const u=new URL(typeof input==='string'?input:input.url, location.href);
+      if(u.hostname==='localhost'||/^127\./.test(u.hostname)||u.host===location.host) path=u.pathname;
+    }catch(e){}
+    if(!path) return f(input,init);
+    const id=++openReqSeq;
+    OPEN_REQ.set(id,{path,t0:performance.now()});
+    // Counted from the send until the answer's headers arrive (or it fails): that
+    // covers the wait in the browser's queue and the server's own work, which is where
+    // a stalled provider shows. Bodies are never touched, so a streamed answer (the
+    // voice, a translation) reads exactly as before.
+    const done=()=>{ OPEN_REQ.delete(id); };
+    return f(input,init).then(r=>{ done(); return r; },e=>{ done(); throw e; });
+  };
+})();
+function openReqSummary(){
+  const by={}, now=performance.now(); let n=0;
+  for(const v of OPEN_REQ.values()){ if(now-v.t0>120000) continue; by[v.path]=(by[v.path]||0)+1; n++; }
+  const parts=Object.entries(by).sort((x,y)=>y[1]-x[1]).map(([k,n])=>k+(n>1?'×'+n:''));
+  return {n, text:parts.join(', ')||'none'};
+}
+
+// ---- connection pools --------------------------------------------------------
+// To the browser each address is its own queue of about 6 connections. Everything the
+// page asks of this server goes to localhost:5000, so a few requests stuck on a stalled
+// provider (the voice, a translation) can hold up the small ones that matter to the
+// room. These go to the same server at their own loopback address instead: the web
+// relay posts (/publish) to 127.0.0.2, ProPresenter (/project) to 127.0.0.3, the
+// spoken clips (/publish-audio) to 127.0.0.4. (The projector's captions, /caption,
+// use 127.0.0.1 -- see netCap.) The server lets the page's own address read their
+// answers (server.py _pool_cors).
+// A pool is used only after a probe from this page reached it, and drops back to the
+// page's own address for good on its second failure in a row, so nothing is ever
+// sent anywhere that does not answer.
+const POOL_ADDR={pub:'127.0.0.2', proj:'127.0.0.3', audio:'127.0.0.4'};
+const poolOn={}, poolFail={};
+function poolUrl(name,path){
+  return (poolOn[name]&&location.hostname==='localhost'&&location.port)
+    ? 'http://'+POOL_ADDR[name]+':'+location.port+path : path;
+}
+function poolFetch(name,path,init){
+  const url=poolUrl(name,path), cross=url!==path;
+  return fetch(url,init).then(r=>{ poolFail[name]=0; return r; },e=>{
+    if(cross && (poolFail[name]=(poolFail[name]||0)+1)>=2){
+      poolOn[name]=false;
+      log('warn','connection pool '+name+' ('+POOL_ADDR[name]+') failed twice: back to the page’s own address');
+    }
+    throw e;
+  });
+}
+(function probePools(){
+  if(location.hostname!=='localhost'||!location.port) return;
+  const names=Object.keys(POOL_ADDR);
+  Promise.all(names.map(n=>fetch('http://'+POOL_ADDR[n]+':'+location.port+'/pipe-status',{cache:'no-store'})
+    .then(r=>{ if(r.ok){ poolOn[n]=true; return n; } return null; },()=>null)))
+  .then(ok=>{
+    const on=ok.filter(Boolean);
+    log('info','connection pools: '+(on.length?on.map(n=>n+' on '+POOL_ADDR[n]).join(', '):'none reachable, using the page’s own address'));
+  });
+})();
+
 // ---- latency metrics -------------------------------------------------------
 // The pipe has three cloud stages and one deliberate wait, and until now only
 // the translator reported a number. These five do the rest, each measured at the
@@ -2441,7 +2515,7 @@ function ppFollowMic(on){
   if(state===ppMicState) return;
   ppMicState=state;
   if(state==='off'){ projectClear(); log('info','ProPresenter box off ('+(!on?'mic off':!ppLookOk?'another look':'silence')+')'); return; }
-  fetch('/project',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'show'})})
+  poolFetch('proj','/project',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'show'})})
     .then(r=>r.json().catch(()=>({})).then(d=>{
       if(!r.ok){ log('warn','ProPresenter: '+(d.error||r.status)); return; }
       if(d.held==='look'){ ppLookOk=false; ppMicState='off'; log('info','ProPresenter box held: look '+(d.look?'"'+d.look+'" ':'')+'is not the translation look'); return; }
@@ -2454,7 +2528,7 @@ setInterval(()=>{
   if(!listening){ ppLookOk=true; return; }   // stopped: forget it; the next show asks the server
   if(!caps.propresenter_look || ppLookBusy) return;
   ppLookBusy=true;
-  fetch('/project/look').then(r=>r.ok?r.json():null).then(d=>{
+  poolFetch('proj','/project/look').then(r=>r.ok?r.json():null).then(d=>{
     if(!d || typeof d.active!=='boolean' || d.active===ppLookOk) return;
     ppLookOk=d.active;
     log('info','ProPresenter look '+(d.look?'"'+d.look+'" ':'')+(d.active?'is live: the box may show':'is not the translation look'));
@@ -2658,8 +2732,30 @@ function renderLights(){
   if(web) setDot($('webDot'),!w?'':w.ok?'live':'error',
     !w?'Nothing sent yet':w.ok?'Reaching your site':'Failing: '+w.err);
 }
+// The server's push watchdog (server.py "Push watchdog") sees both ends: the words
+// Soniox finalized and the captions the projector store received. When speech kept
+// arriving with nothing stored for CT_PUSH_WATCH_S seconds it lists an episode; the
+// page copies each into its log and the session record, and again when it closes.
+const watchLogged={};   // episode n -> 'open' | 'closed'
+function noteWatch(w){
+  if(!w||!Array.isArray(w.episodes)) return;
+  for(const e of w.episodes){
+    const done=e.recovered!==null&&e.recovered!==undefined;
+    const st=done?'closed':'open';
+    if(watchLogged[e.n]===st||(watchLogged[e.n]==='closed')) continue;
+    const first=!watchLogged[e.n];
+    watchLogged[e.n]=st;
+    const pp=e.projectors+' projector page'+(e.projectors===1?'':'s')+' polling';
+    if(first && !done)
+      log('warn','push watchdog: '+e.words+' words spoken and no caption stored for '+Math.round(e.secs)+' s ('+pp+')');
+    if(done)
+      log(e.recovered?'info':'warn','push watchdog: '+(e.recovered?'captions stored again':'the speech stream closed')+' after '+Math.round(e.secs)+' s ('+e.words+' words waiting, '+pp+')');
+    if(done||first) jEvent('push_gap',{from:e.at,secs:e.secs,words:e.words,projectors:e.projectors,recovered:done?!!e.recovered:null});
+  }
+}
 async function pollPipe(){
   try{ pipe=await (await fetch('/pipe-status',{cache:'no-store'})).json(); }catch(e){ return; }
+  noteWatch(pipe.watch);
   renderLights();
 }
 setInterval(pollPipe,3000);
@@ -6107,9 +6203,43 @@ let castSeq=Date.now();
 // older than what it already holds (server.py caption_ep). Counted from the load
 // time too, so a reloaded page's posts are newer than the last page's.
 let castN=Date.now()*1000;
+// Its own connection pool. The browser queues requests per address, and every other
+// request this page makes goes to localhost:5000. Posting the projector's captions
+// to 127.0.0.1:5000 instead (the same server, a different address to the browser)
+// gives them six connections of their own, so a voice or translation request that
+// stalls cannot hold a caption behind it. A cross-origin "no-cors" post with a
+// text/plain body needs no permission check and no reply is read; the server reads
+// the same JSON from it. If that address is not reachable from this page the first
+// failure switches back to the old way for good.
+let capBase=(location.hostname==='localhost'&&location.port)?('http://127.0.0.1:'+location.port):'';
+let capSlowAt=0, capSlowN=0, capFails=0;
 function netCap(msg){
-  fetch('/caption',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({...msg,n:++castN})}).catch(()=>{});
+  const body=JSON.stringify({...msg,n:++castN});
+  const t0=performance.now();
+  const open0=openReqSummary();            // what was open as this push left
+  const cross=!!capBase;
+  const p=cross
+    ? fetch(capBase+'/caption',{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=UTF-8'},body})
+    : fetch('/caption',{method:'POST',headers:{'Content-Type':'application/json'},body});
+  p.then(()=>{
+    capFails=0;
+    const ms=performance.now()-t0;
+    if(ms>2000){
+      capSlowN++;
+      const now=Date.now();
+      if(now-capSlowAt>10000){             // one line per 10 s at most
+        capSlowAt=now;
+        log('warn','projector push slow: '+(ms/1000).toFixed(1)+' s (a '+body.length+'-byte post'+(cross?' on its own connection':'')+
+            '); open when it left: '+open0.text+' ('+open0.n+'); '+capSlowN+' slow so far');
+        J.events.push({at:Date.now(),kind:'push_slow',ms:Math.round(ms),bytes:body.length,own_pool:cross,open:open0.text});
+        J.dirty=true;
+      }
+    }
+  },()=>{
+    capFails++;
+    if(cross&&capFails>=2){ capBase=''; log('warn','projector push: 127.0.0.1 not reachable from this page, using the page address'); }
+    else if(!cross){ if(Date.now()-capSlowAt>10000){ capSlowAt=Date.now(); log('warn','projector push failed (the server did not take it)'); } }
+  });
 }
 // ---- clearing the wall -----------------------------------------------------
 // The room's screens only: the strip, the web wall and ProPresenter are wiped and
@@ -6247,7 +6377,7 @@ function publishSeg(id,text,done,lang,src,t){
   if(t && !m.t) m.t=Math.round(t);
   if(done) youtubeSeg(id,text,m);
   if(!webPublishing()) return;
-  fetch('/publish',{method:'POST',headers:{'Content-Type':'application/json'},
+  poolFetch('pub','/publish',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({id,text,done,...(m.lang?{lang:m.lang}:{}),...(m.src?{src:m.src}:{}),...(m.t?{t:m.t}:{})})})
     .then(r=>r.ok||r.json().then(d=>log('warn','web publish: '+(d.error||r.status))))
     .catch(e=>log('warn','web publish failed: '+e.message));
@@ -6263,7 +6393,7 @@ async function publishSegAudio(id,clips){
   try{
     const blobs=await Promise.all(clips.map(c=>fetch(c.u).then(r=>r.blob())));
     const mp3=new Blob(blobs,{type:AU.mime});
-    const r=await fetch('/publish-audio?id='+encodeURIComponent(id),
+    const r=await poolFetch('audio','/publish-audio?id='+encodeURIComponent(id),
       {method:'POST',headers:{'Content-Type':AU.mime},body:mp3});
     if(!r.ok) r.json().then(d=>log('warn','web audio: '+(d.error||r.status))).catch(()=>{});
   }catch(e){ log('warn','web audio publish failed: '+e.message); }
@@ -6311,7 +6441,7 @@ if($('ytDl')){
 }
 function publishClear(){
   if(!caps.publish) return;   // clear the wall regardless of the box, if configured
-  fetch('/publish',{method:'POST',headers:{'Content-Type':'application/json'},
+  poolFetch('pub','/publish',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'clear'})}).catch(()=>{});
 }
 if(webStream) webStream.addEventListener('change',()=>{
@@ -6330,14 +6460,14 @@ if(webStream) webStream.addEventListener('change',()=>{
 function projecting(){ return caps.propresenter && ppStream.checked; }
 function projectSeg(text,id){
   if(!projecting() || !text || wallDead(id) || caps.propresenter_follow_mic) return;   // follow-the-Mic: no text
-  fetch('/project',{method:'POST',headers:{'Content-Type':'application/json'},
+  poolFetch('proj','/project',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({text})})
     .then(r=>r.ok||r.json().then(d=>log('warn','ProPresenter: '+(d.error||r.status))))
     .catch(e=>log('warn','ProPresenter failed: '+e.message));
 }
 function projectClear(){
   if(!caps.propresenter) return;   // hide the on-screen message regardless of the box
-  fetch('/project',{method:'POST',headers:{'Content-Type':'application/json'},
+  poolFetch('proj','/project',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'clear'})}).catch(()=>{});
 }
 if(ppStream) ppStream.addEventListener('change',()=>{

@@ -432,6 +432,129 @@ def _cap_prune():
         _CAP["segs"] = keep
         _CAP["rev"] += 1
 
+# Push watchdog. The page, not the server, decides the captions and posts them to
+# this store (/caption), so speech can keep arriving from Soniox while nothing reaches
+# the room: the page's sends stalled, the page stopped, a gate swallowed it. The server
+# is the one place that sees both ends -- the words Soniox finalizes on /stt-stream and
+# the captions /caption stores -- so it keeps the gap between them. When at least
+# CT_PUSH_WATCH_WORDS words have been finalized since the last stored caption and
+# CT_PUSH_WATCH_S seconds have passed with nothing stored, that is an episode: logged
+# on the console, listed in /pipe-status (the page logs it and adds it to the session
+# record), and closed with its length when a caption finally arrives. The wait is well
+# past normal (Soniox's last word to a stored caption took 0.3 s at the median and
+# 3.7 s at the worst on 2026-11-22). Only reports; it changes nothing. Where speech was
+# dropped on purpose (tongues gate, prayer gate) it can fire too; a closed stream, a
+# muted or held pipeline ends the watch, because no words arrive then.
+#   CT_PUSH_WATCH_S      seconds without a stored caption to call it an episode (12; 0 = off)
+#   CT_PUSH_WATCH_WORDS  finalized words that must be waiting (6)
+CT_PUSH_WATCH_S = _pp_int_env("CT_PUSH_WATCH_S", 12, 0, 600)
+CT_PUSH_WATCH_WORDS = _pp_int_env("CT_PUSH_WATCH_WORDS", 6, 1, 1000)
+_WD_LOCK = threading.Lock()
+_WD = {"since": None, "words": 0, "open": None, "episodes": [], "seq": 0, "thread": False}
+_WD_KEEP = 20
+
+
+def _wd_speech(tokens, now=None):
+    """Called by the /stt-stream reader with each batch of Soniox tokens: counts the
+    finalized words of the original speech (not Soniox's own translation, not its
+    <end>/<fin> markers) that have no stored caption yet."""
+    if not CT_PUSH_WATCH_S:
+        return
+    n = 0
+    for t in tokens or ():
+        if not isinstance(t, dict) or not t.get("is_final") or t.get("translation_status") == "translation":
+            continue
+        txt = t.get("text") or ""
+        if txt.startswith("<") or not any(ch.isalnum() for ch in txt):
+            continue
+        n += 1
+    if not n:
+        return
+    now = time.monotonic() if now is None else now
+    with _WD_LOCK:
+        if _WD["since"] is None:
+            _WD["since"] = now
+            _WD["words"] = 0
+        _WD["words"] += n
+        if not _WD["thread"]:
+            _WD["thread"] = True
+            threading.Thread(target=_wd_loop, daemon=True).start()
+
+
+def _wd_caption(now=None):
+    """A caption was stored: the gap is over (and an open episode is closed)."""
+    now = time.monotonic() if now is None else now
+    with _WD_LOCK:
+        ep = _WD["open"]
+        if ep is not None:
+            ep["secs"] = round(now - ep["start"], 1)
+            ep["recovered"] = True
+            _WD["open"] = None
+            print("[watch] captions are being stored again after %.0f s" % ep["secs"], flush=True)
+        _WD["since"] = None
+        _WD["words"] = 0
+
+
+def _wd_stream_closed(now=None):
+    """The speech stream ended (Stop, mute/hold, the page went): nothing is owed."""
+    now = time.monotonic() if now is None else now
+    with _WD_LOCK:
+        _WD["since"] = None
+        _WD["words"] = 0
+        ep = _WD["open"]
+        if ep is not None:
+            ep["secs"] = round(now - ep["start"], 1)
+            ep["recovered"] = False
+            ep["ended"] = "the speech stream closed"
+            _WD["open"] = None
+
+
+def _wd_check(now=None):
+    """Opens an episode when speech has waited too long for a stored caption."""
+    if not CT_PUSH_WATCH_S:
+        return
+    now = time.monotonic() if now is None else now
+    with _WD_LOCK:
+        since = _WD["since"]
+        if since is None or _WD["open"] is not None:
+            return
+        if _WD["words"] < CT_PUSH_WATCH_WORDS or now - since < CT_PUSH_WATCH_S:
+            return
+        _WD["seq"] += 1
+        pages = sum(1 for t in list(_PROJ_SEEN.values()) if now - t < 15)
+        ep = {"n": _WD["seq"], "at": int(time.time() * 1000) - int((now - since) * 1000),
+              "start": since, "secs": None, "recovered": None, "words": _WD["words"],
+              "projectors": pages}
+        _WD["open"] = ep
+        _WD["episodes"].append(ep)
+        del _WD["episodes"][:-_WD_KEEP]
+        print("[watch] %d words spoken and no caption stored for %.0f s (%d projector page%s polling)"
+              % (ep["words"], now - since, pages, "" if pages == 1 else "s"), flush=True)
+
+
+def _wd_loop():
+    while True:
+        time.sleep(2)
+        try:
+            _wd_check()
+        except Exception:
+            pass
+
+
+def _wd_report(now=None):
+    """For /pipe-status: the open episode's current length and the recent episodes."""
+    now = time.monotonic() if now is None else now
+    with _WD_LOCK:
+        eps = []
+        for e in _WD["episodes"]:
+            secs = e["secs"] if e["secs"] is not None else round(now - e["start"], 1)
+            eps.append({"n": e["n"], "at": e["at"], "secs": secs, "words": e["words"],
+                        "projectors": e["projectors"], "recovered": e["recovered"],
+                        **({"ended": e["ended"]} if e.get("ended") else {})})
+        return {"gap_s": round(now - _WD["open"]["start"], 1) if _WD["open"] else None,
+                "episodes": eps}
+
+
 # External-relay worker. The church web host can stall (mod_security, a slow shared
 # box), and a BLOCKING relay would tie up a Flask worker thread for its whole timeout
 # -- so /publish and /publish-audio hand the relay to ONE background thread and return
@@ -1968,6 +2091,7 @@ def stt_stream(ws):
                         ear_latch(j.get("tokens") or ())
                     if verse_chunks is not None:
                         verse_chunks.tokens(j.get("tokens") or ())
+                    _wd_speech(j.get("tokens"))
                     proc = float(j.get("total_audio_proc_ms") or 0)
                     if proc > last_proc:
                         _bump_usage(stt_secs=(proc - last_proc) / 1000.0)
@@ -1987,6 +2111,7 @@ def stt_stream(ws):
             pass
         finally:
             stop.set()
+            _wd_stream_closed()
             try:
                 ws.close()
             except Exception:
@@ -3295,6 +3420,26 @@ def publish_audio_ep():
     return jsonify(ok=True)
 
 
+# The operator page sends its captions, web relay posts and ProPresenter commands to
+# this same server at other loopback addresses (127.0.0.1 ... 127.0.0.4): to the
+# browser each address has its own six connections, so a request that hangs on a
+# stalled provider cannot hold the room's captions in line behind it (see "connection
+# pools" in index.html). From the page's point of view that is another origin, so it
+# needs this permission to read the answers. Only the page's own address is let in:
+# http://localhost:PORT, or http://127.0.0.1:PORT where that is how it was opened.
+@app.after_request
+def _pool_cors(resp):
+    origin = request.headers.get("Origin")
+    # Worked out per request: the launcher may set PORT after this module loads.
+    if origin and origin in ("http://localhost:%d" % PORT, "http://127.0.0.1:%d" % PORT):
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Access-Control-Max-Age"] = "7200"
+        resp.headers.add("Vary", "Origin")
+    return resp
+
+
 @app.route("/caption", methods=["POST"])
 def caption_ep():
     """Mirror one caption into the in-memory projector store, so a networked
@@ -3316,7 +3461,12 @@ def caption_ep():
     sent before a Clear comes back after it, and a Clear that lands late wipes
     only what was sent before it. A post without `n` (a tool, a test) applies as
     it arrives, as before."""
-    data = request.get_json(silent=True) or {}
+    # force=True: the page posts from a second origin (127.0.0.1, see netCap in
+    # index.html) as "no-cors" text/plain so the browser sends no preflight; the
+    # body is the same JSON, only the Content-Type differs.
+    data = request.get_json(force=True, silent=True) or {}
+    if not isinstance(data, dict):
+        data = {}
     n = data.get("n")
     if isinstance(n, bool) or not isinstance(n, (int, float)):
         n = None
@@ -3353,6 +3503,8 @@ def caption_ep():
                     if newer(seg["n"]):
                         seg.update(text=text, done=done, at=now, n=n)
                         _CAP["rev"] += 1
+                        if text:
+                            _wd_caption()
                 elif newer(_CAP["made_n"], _CAP["clear_n"]):
                     _CAP["segs"].append({"id": sid, "text": text, "done": done, "at": now, "n": n})
                     if n is not None:
@@ -3360,6 +3512,8 @@ def caption_ep():
                     if len(_CAP["segs"]) > _CAP_MAX_SEGS:
                         _CAP["segs"] = _CAP["segs"][-_CAP_MAX_SEGS:]
                     _CAP["rev"] += 1
+                    if text:
+                        _wd_caption()
         rev = _CAP["rev"]
     return jsonify(ok=True, rev=rev)
 
@@ -3400,7 +3554,8 @@ def pipe_status_ep():
         if now - t > 30:
             _PROJ_SEEN.pop(k, None)
     return jsonify(projectors=sum(1 for t in list(_PROJ_SEEN.values()) if now - t < 15),
-                   web=_RELAY_HEALTH.get("publish"))
+                   web=_RELAY_HEALTH.get("publish"),
+                   watch=_wd_report())
 
 
 # ---- The Attendant: which Bible verse is in focus (scripts/verse_detect.py) ----

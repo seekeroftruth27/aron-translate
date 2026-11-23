@@ -73,6 +73,7 @@ HARNESS = """
     calls.push('show:' + JSON.parse(opts.body).action);
     return {then: function(){ return {catch: function(){}}; }};
   }
+  function poolFetch(name, url, opts){ return fetch(url, opts); }   // the page's per-address queues
   function log(){}
   function setInterval(fn){ ticks.push(fn); }
   %SOURCE%
