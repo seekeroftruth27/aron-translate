@@ -1,5 +1,46 @@
 # Changelog
 
+## [v2.24.2] — 2026-11-23
+
+### Changed
+- **The room projector's captions have a connection of their own, and a slow push
+  says what was in its way.** On 2026-11-22 the web relay received lines up to 39 s
+  late in two stretches (about 18:48:28-18:49:17 and 18:50:52-18:51:42, smaller ones
+  after 19:42), in bursts, at the same moments the voice fell 34-38 s behind. The
+  page sends everything to one address (`localhost:5000`) and the browser allows
+  only about 6 connections to an address at a time, so a few stalled voice or
+  translation requests can leave a tiny caption push waiting in line while the page
+  itself carries on; a networked projector then sees nothing new. Now:
+  - **Own pool.** The page posts the projector's captions to `127.0.0.1:5000`, the
+    same server at an address the browser counts separately. It is a no-cors
+    `text/plain` post (no permission check); `/caption` reads the same JSON from it.
+    If 127.0.0.1 cannot be reached from the page, the first two failures switch back
+    to the old way.
+  - **Evidence.** A push that takes over 2 s logs `projector push slow: ... open when
+    it left: /speak-stream x3, /translate ...` (at most once per 10 s) and adds a
+    `push_slow` event to the session record, with its size and whether it used the
+    own pool.
+  - **The web relay and ProPresenter too.** `/publish` (the website's captions) now goes
+    to `127.0.0.2`, `/project` (the ProPresenter box and its Look check) to
+    `127.0.0.3`, and `/publish-audio` (the spoken clips) to `127.0.0.4`: each its own
+    queue, so none waits behind another or behind a stalled voice or translation request.
+    These need their answers read (ProPresenter's "held: look", a relay error), so the
+    server now lets the page's own address (`http://localhost:PORT`, or
+    `http://127.0.0.1:PORT`) read answers from the other loopback addresses; no other
+    site gets that permission. A pool is used only after a probe from the page reached
+    it, and drops back to the page's own address for good on its second failure in a
+    row; the log says which pools are on.
+  - **A watchdog on the server.** The server sees both ends of the push: the words Soniox
+    finalizes on `/stt-stream` and the captions `/caption` stores. When at least 6 words
+    (`CT_PUSH_WATCH_WORDS`) have been spoken and 12 s (`CT_PUSH_WATCH_S`, 0 = off) pass
+    with nothing stored, it logs `[watch] ... no caption stored for N s (K projector pages
+    polling)` on the console, lists the episode in `/pipe-status`, and the page copies it
+    into its log and the session record (`push_gap`, with the projector page count), then
+    notes when captions are stored again. It only reports. A closed speech stream (mute,
+    music hold, Stop) ends the watch; speech dropped on purpose (tongues or prayer gate)
+    can trigger it too. It cannot see a page that has gone away, since the stream closes
+    with it.
+
 ## [v2.24.1] — 2026-11-23
 
 ### Changed
