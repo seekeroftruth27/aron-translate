@@ -691,7 +691,7 @@
         <select id="ttsOut"><option value="">This window (default)</option></select></label>
       <div class="f" id="speedWrap" title="Soniox speaking rate."><span>Speed <b class="v" id="speedV">1.00×</b></span>
         <input type="range" id="speed" min="70" max="120" step="5" value="100" aria-label="Speed"></div>
-      <div class="f" id="delayWrap" title="How far behind the preacher the voice speaks. A longer wait lets it read whole sentences instead of cutting them at a comma. With Expression tags on it waits at least 8 s, so each clip has time to be styled. Applies from the next sentence."><span>Sentence wait <b class="v" id="delayV">12 s</b></span>
+      <div class="f" id="delayWrap" title="How far behind the preacher the voice speaks (up to 4 s sooner in a pause of his, to catch up there rather than by speeding up). A longer wait lets it read whole sentences instead of cutting them at a comma. With Expression tags on it waits at least 8 s, so each clip has time to be styled. Applies from the next sentence."><span>Sentence wait <b class="v" id="delayV">12 s</b></span>
         <input type="range" id="voiceDelay" min="6" max="12" step="1" value="12" aria-label="Sentence wait">
         <p class="help" id="delayHelp"></p></div>
       <label class="f" id="exprWrap" title="A model of its own (Claude Haiku 5.5, or Luna without an Anthropic key) reads what has been said and styles each clip for the voice: a delivery tag such as [earnestly] where a sentence begins, a word or two in capitals, a pause. It never changes a word. Off: the voice reads plainly. Applies from the next sentence."><div>Expression tags<p class="help">Tags, emphasis and pauses, from its own model.</p></div>
@@ -6878,7 +6878,8 @@ transcript.addEventListener('click',e=>{
 //   drift > RATE2_AT  -> faster still
 //   drift > RATE3_AT  -> faster again, a last try before the text is dropped
 //   drift > DROP_AT   -> skip ahead to DROP_TO (jump toward live)
-// (The clauses voice keeps only the skip: it reads at its own steady pace, paceFor.)
+// (The clauses voice paces itself instead, and skips mid-audio only past NAT_SAFETY_Q:
+// see "the natural room voice".)
 //
 // Every tier acts on the audio already in hand and nothing else. Playback lag
 // is never reported upstream: the translator does not know or care how far
@@ -6903,7 +6904,8 @@ const JITTER_S=0.35;
 const KEEP_BEHIND_S=30;
 let curRate=1;
 let dryAt=0;   // when the voice ran dry mid-sentence (see initAudioOut), else 0
-const AU={el:null,ms:null,sb:null,q:[],started:false,broken:false,mime:'audio/mpeg'};
+const AU={el:null,ms:null,sb:null,q:[],started:false,broken:false,mime:'audio/mpeg',
+          clipStart:true,tail:false,frame:null,padTimer:0};
 
 function audioReady(){ return !!(AU.sb && AU.ms && AU.ms.readyState==='open' && !AU.broken); }
 function bufEnd(){
@@ -6996,10 +6998,11 @@ function openAudioTicket(el,spokeMs){
 }
 // The clauses voice (caps.el_voice_mode, server voice_clauses): the server cuts
 // the voice into clips at full stops and returns each clip on the ticket of the
-// caption it began with. Each clip starts no earlier than voice_delay_s after
-// the preacher said its first word, so the voice sits a steady few seconds
-// behind him and pauses where he paused instead of wherever it ran out of words.
-// It reads at one steady pace (paceFor, below) rather than the drift ladder.
+// caption it began with. Each clip starts about voice_delay_s after the preacher
+// said its first word (up to NAT_EARLY sooner, in a pause of his), so the voice
+// sits a steady few seconds behind him and pauses where he paused instead of
+// wherever it ran out of words. It catches up in his pauses, not by speed: see
+// "the natural room voice" below.
 let clauseRate=1;
 function clauseMode(){
   const p=ttsProvider();
@@ -7034,44 +7037,78 @@ function voiceDueS(spokeMs){
 }
 // True while a ticket's first slice must wait for its moment (re-checked at
 // least every second, since what is queued ahead of it keeps playing out).
-// A clip that carries on the sentence the voice has just been speaking (the one
-// before it ended without a full stop: cut at a comma when its moment came)
-// follows straight on, if it is here while the voice still speaks or within
-// FOLLOW_MS of it falling silent, instead of waiting for its own moment: the
-// gap was a pause in the middle of a sentence (2026-11-20). It keeps the pace.
+// ---- the natural room voice (2026-11-22) --------------------------------------
+// The clauses voice used his pauses badly and its speed a lot. A sentence it was
+// late for started on the last one's final sound, and its pace (one pace rising
+// with how late sentences started, 1-1.3x, 1.4x in a pile-up) seldom came back to
+// 1x: replayed with the real clips of 2026-11-22, 70 of its 78 minutes were sped
+// up and 403 of the 427 sentences it started late were glued to the one before.
+// By the same replay over four services (validation/scripts/voice_natural_sim.py),
+// this reads 27 of 288 minutes faster than 1x, none past 1.1x, and glues 9
+// sentences instead of 1,297, a few seconds further behind him at the 90th
+// percentile (15-19 s at a 12 s delay; 33 s on the fastest service).
+//   - A sentence starts at the later of its moment less NAT_EARLY (his first word
+//     + the delay - 4 s: a pause of his is shortened, never removed) and a natural
+//     gap after the voice falls quiet: NAT_SENT_GAP after a full stop, NAT_MIN_GAP
+//     once over NAT_SOFT s behind (the clip's own edge silence comes on top).
+//   - A clip carrying on the sentence just spoken (cut at a comma, here within
+//     FOLLOW_MS of the voice falling silent) follows after NAT_CLAUSE_GAP.
+//   - The gap is silence put into the timeline in front of the clip (slot.lead,
+//     made by mp3Silence in drainAudioTickets), so the voice never runs dry in it
+//     and never stops mid-word (armPad). A longer wait than NAT_HOLD_OVER is a
+//     hold: the clip waits, re-checked at least every second.
+//   - Under NAT_SOFT s behind it reads at 1x and catches up in his pauses. Past
+//     that the pace rises toward NAT_MAX at NAT_HARD, set where a sentence begins,
+//     and goes back to 1x once under NAT_SOFT/2 behind.
+//   - Past NAT_DROP_LATE s behind a whole sentence is left out, with the rest of
+//     it, never the middle of one; a piece carrying on a sentence only past
+//     NAT_DROP_LATE + NAT_PIECE_EXTRA. The clauses voice keeps applyDrift's
+//     mid-audio skip only past NAT_SAFETY_Q s queued.
 const FOLLOW_MS=1500, SENT_END=/[.!?…。！？]["'’”“»」)\]]*\s*$/;
+const NAT_SENT_GAP=0.3, NAT_MIN_GAP=0.2, NAT_CLAUSE_GAP=0.08, NAT_EARLY=4, NAT_HOLD_OVER=1.5,
+      NAT_SOFT=10, NAT_HARD=20, NAT_MAX=1.1, NAT_STEP=0.02, NAT_DROP_LATE=30, NAT_PIECE_EXTRA=10,
+      NAT_SAFETY_Q=45;
+let natPace=1, natDropping=false, paceAt=null;
+// True while a ticket's first slice must wait; false to feed it (slot.lead: seconds
+// of silence in front of it) or leave it out (slot.drop).
 function holdTicket(slot){
   if(!clauseMode()||fallbackMode||!slot.spokeMs) return false;
-  if(AUQ.lastText!=null&&!SENT_END.test(AUQ.lastText)&&epochNow()<AUQ.freeAt+FOLLOW_MS) return false;
+  if(natDropping) return natDrop(slot,null);
+  const now=epochNow();
+  const cont=AUQ.lastText!=null&&!SENT_END.test(AUQ.lastText)&&now<AUQ.freeAt+FOLLOW_MS;
+  const quietAt=now+queuedAudioS()/Math.max(1,curRate)*1000;      // when the voice falls silent
   const due=slot.spokeMs+voiceDelayS()*1000;
-  const startAt=epochNow()+queuedAudioS()/Math.max(1,curRate)*1000;
-  if(startAt<due-60){
-    if(!AUQ.timer) AUQ.timer=setTimeout(()=>{ AUQ.timer=0; drainAudioTickets(); },Math.min(1000,due-startAt));
+  const gap=cont?NAT_CLAUSE_GAP:(quietAt-due>NAT_SOFT*1000?NAT_MIN_GAP:NAT_SENT_GAP);
+  const start=cont?quietAt+gap*1000:Math.max(quietAt+gap*1000,due-NAT_EARLY*1000);
+  const lead=(start-quietAt)/1000;
+  if(lead>NAT_HOLD_OVER){
+    if(!AUQ.timer) AUQ.timer=setTimeout(()=>{ AUQ.timer=0; drainAudioTickets(); },Math.min(1000,(lead-NAT_HOLD_OVER)*1000+20));
     return true;
   }
-  let b=0; for(const s of slot.slices) b+=(s[0]?s[0].length*0.75:0);
-  schedulePace(paceFor((startAt-due)/1000,queuedAudioS()+b/16000));
+  const late=(start-due)/1000;
+  if(late>NAT_DROP_LATE+(cont?NAT_PIECE_EXTRA:0)) return natDrop(slot,late);
+  if(!cont){
+    if(late<=NAT_SOFT/2) natPace=1;
+    else if(late>NAT_SOFT){
+      const want=+(Math.round(Math.min(NAT_MAX,1+(NAT_MAX-1)*(late-NAT_SOFT)/(NAT_HARD-NAT_SOFT))/NAT_STEP)*NAT_STEP).toFixed(2);
+      if(want>natPace) natPace=want;
+    }
+    schedulePace(natPace);
+  }
+  slot.lead=lead>0.001?lead:0;
   return false;
 }
-// The clauses voice reads at ONE pace, steered slowly. It used to read each late
-// clip 5% or 10% faster, on top of the drift ladder, which also fires inside any
-// clip longer than RATE1_AT (ElevenLabs sends audio 4-6x faster than it plays):
-// over both 15 November services, simulated whole, that changed speed about 18
-// times a minute of speech and swung between pausing and hurrying about 1,000
-// times a service. Now the pace follows how late sentences have been starting:
-// quick to rise (over PACE_UP sentences), slow to fall (PACE_DOWN), PACE_K faster
-// per second late, from 1 to PACE_MAX, in steps of at least PACE_BAND, changing
-// only where a sentence begins. Same pauses, about a twelfth of the swings
-// (validation/scripts/voice_pace_sim.py, 2026-11-21). A sentence fed with over
-// PACE_RUSH_Q s already queued (a stall upstream let several go at once) reads at
-// PACE_RUSH, so the skip (DROP_AT) stays a last resort.
-const PACE_UP=4, PACE_DOWN=20, PACE_K=0.03, PACE_MAX=1.3, PACE_BAND=0.05, PACE_RUSH_Q=15, PACE_RUSH=1.4;
-let paceLate=0, paceBase=1, paceAt=null;
-function paceFor(late,queued){
-  paceLate+=(late-paceLate)/(late>paceLate?PACE_UP:PACE_DOWN);
-  const r=+(Math.round(Math.min(PACE_MAX,Math.max(1,1+PACE_K*paceLate))/0.025)*0.025).toFixed(3);
-  if(Math.abs(r-paceBase)>=PACE_BAND-1e-6) paceBase=r;
-  return queued>PACE_RUSH_Q ? Math.max(paceBase,PACE_RUSH) : paceBase;
+// Leave a clip out: a sentence started too late (`late` s behind), or the rest of
+// one that was. The pieces after it carry on its sentence until one ends it, so
+// they go too (a clip whose words are unknown ends the run, rather than risk it).
+function natDrop(slot,late){
+  slot.drop=true;
+  natDropping=slot.text!=null&&!SENT_END.test(slot.text);
+  if(late!=null){
+    log('warn','voice: left out a sentence, '+late.toFixed(0)+' s behind him');
+    jEvent('voice_drop',{behind:+late.toFixed(1)});
+  }
+  return false;
 }
 // The new pace starts with the sentence: when what is queued ahead of it has
 // been heard (applyDrift, on a timer for that moment), not in the middle of the
@@ -7098,8 +7135,12 @@ function drainAudioTickets(){
   for(;;){
     const slot=AUQ.held.get(AUQ.serving);
     if(!slot) return;                    // nothing dispatched yet at this number
-    if(slot.slices.length&&!slot.fed&&holdTicket(slot)) return;   // clauses: not its moment yet
-    while(slot.slices.length){ const s=slot.slices.shift(); slot.fed=true; enqueueAudio(s[0],s[1],slot.el); }
+    if(slot.slices.length&&!slot.fed&&!slot.drop&&holdTicket(slot)) return;   // clauses: not its moment yet
+    if(slot.drop) slot.slices.length=0;  // left out (natDrop): its audio, as it comes, too
+    else{
+      if(slot.lead&&!slot.fed&&slot.slices.length) natGap(slot);
+      while(slot.slices.length){ const s=slot.slices.shift(); slot.fed=true; enqueueAudio(s[0],s[1],slot.el); }
+    }
     if(slot.fed){                        // when the voice will have said what it has
       if(slot.text!=null) AUQ.lastText=slot.text;
       AUQ.freeAt=epochNow()+queuedAudioS()/Math.max(1,curRate)*1000;
@@ -7108,9 +7149,16 @@ function drainAudioTickets(){
     AUQ.held.delete(AUQ.serving); AUQ.serving++;
   }
 }
+// The pause in front of a clip, as silence shaped like the clip itself (its first
+// frame, else the last clip's), so the timeline plays straight through it.
+function natGap(slot){
+  const b=slot.slices[0][0], f=(b&&mp3Frame(b64Bytes(b.slice(0,8192))))||AU.frame;
+  if(f&&!fallbackMode&&!AU.broken) AU.q.push({buf:mp3Silence(f,slot.lead),el:null});
+  slot.lead=0;
+}
 function resetAudioTickets(){            // a new listening session starts clean
   AUQ.next=0; AUQ.serving=0; AUQ.held.clear(); AUQ.lastText=null; AUQ.freeAt=0;
-  clauseRate=1; paceLate=0; paceBase=1; paceAt=null;
+  clauseRate=1; natPace=1; natDropping=false; paceAt=null;
   if(AUQ.timer){ clearTimeout(AUQ.timer); AUQ.timer=0; }
   clearSpeaking();
 }
@@ -7134,8 +7182,58 @@ function enqueueAudio(b64,last,el){
   if(fallbackMode) return fbEnqueue(b64,last,el);
   initAudioOut();
   if(AU.broken) return fbEnqueue(b64,last,el);
-  if(b64) AU.q.push({buf:b64Bytes(b64),el:el||null});
-  pumpAppend(); maybeStart(); applyDrift();
+  if(b64){
+    const buf=b64Bytes(b64);
+    if(AU.clipStart) AU.frame=mp3Frame(buf)||AU.frame;   // a clip's first bytes: its frame shape
+    AU.clipStart=false;
+    AU.q.push({buf,el:el||null});
+  }
+  if(b64||last) AU.tail=!!last;
+  if(last) AU.clipStart=true;
+  pumpAppend(); maybeStart(); applyDrift(); armPad();
+}
+// The voice running out at the end of a clip -- in the clauses voice at nearly
+// every sentence, held for its moment -- does not stop at the clip's last sample:
+// the element halts about 0.1-0.15 s short of it, waits there, and plays that
+// remainder only once the next clip is appended, after the pause and glued to its
+// first word. Soniox clips end on their last sound, so it was the end of a word:
+// "hear… ts" (2026-11-22; Chromium 150 held back 123-139 ms of today's clips).
+// So when what is buffered is about to run out with a finished clip at its end and
+// nothing behind it, PAD_S of silence goes on after the clip, and it is the silence
+// that waits. Only in the clauses voice, whose clips are separate encodings: the
+// continuous stream's pieces carry on one encoding, and silence between them would
+// break it.
+const PAD_S=0.3, PAD_AHEAD_S=0.4;
+function armPad(){
+  if(AU.padTimer){ clearTimeout(AU.padTimer); AU.padTimer=0; }
+  if(!AU.tail||!AU.frame||!clauseMode()) return;
+  const left=queuedAudioS()-PAD_AHEAD_S;
+  if(left<=0){ AU.tail=false; AU.q.push({buf:mp3Silence(AU.frame,PAD_S),el:null}); pumpAppend(); return; }
+  AU.padTimer=setTimeout(()=>{ AU.padTimer=0; armPad(); },left/Math.max(1,curRate)*1000);
+}
+// The first Layer III frame in a clip's opening bytes (after any ID3 tag), as the
+// shape of its silence: the same header with no CRC and no padding, then zeros,
+// which every decoder plays as silence (recorder.py's _first_frame and silence).
+const MP3_KBPS=[[0,32,40,48,56,64,80,96,112,128,160,192,224,256,320],[0,8,16,24,32,40,48,56,64,80,96,112,128,144,160]],
+      MP3_RATES={3:[44100,48000,32000],2:[22050,24000,16000],0:[11025,12000,8000]};
+function mp3Frame(u){
+  let i=0;
+  if(u.length>=10&&u[0]===0x49&&u[1]===0x44&&u[2]===0x33)
+    i=10+((u[6]&0x7F)<<21|(u[7]&0x7F)<<14|(u[8]&0x7F)<<7|(u[9]&0x7F));
+  for(;i+4<=u.length;i++){
+    if(u[i]!==0xFF||(u[i+1]&0xE0)!==0xE0) continue;
+    const ver=(u[i+1]>>3)&3, layer=(u[i+1]>>1)&3, br=u[i+2]>>4, sr=(u[i+2]>>2)&3;
+    if(ver===1||layer!==1||sr===3||br===0||br===15) continue;
+    const samples=ver===3?1152:576, rate=MP3_RATES[ver][sr];
+    return {header:Uint8Array.of(0xFF,u[i+1]|0x01,u[i+2]&0xFD,u[i+3]), s:samples/rate,
+            bytes:Math.floor(samples/8*MP3_KBPS[ver===3?0:1][br]*1000/rate)};
+  }
+  return null;
+}
+function mp3Silence(f,seconds){           // at least `seconds`, in whole frames
+  const n=Math.max(1,Math.ceil(seconds/f.s-1e-9)), out=new Uint8Array(f.bytes*n);
+  for(let k=0;k<n;k++) out.set(f.header,k*f.bytes);
+  return out;
 }
 // Follow the playhead down the transcript. Called from the housekeeping tick
 // rather than from `timeupdate`, so it keeps working while paused, in fallback
@@ -7236,7 +7334,7 @@ function applyDrift(){
     if(want>curRate) jEvent('voice_rate',{rate:want,behind:+d.toFixed(1)});
     curRate=want; AU.el.playbackRate=want; AU.el.preservesPitch=true;
   }
-  if(d>DROP_AT){                       // hopeless backlog: jump toward live
+  if(d>(clauseMode()?NAT_SAFETY_Q:DROP_AT)){   // hopeless backlog: jump toward live (clauses: natDrop first)
     const to=Math.max(0,bufEnd()-DROP_TO);
     const skipped=to-AU.el.currentTime;
     if(skipped>0.5){

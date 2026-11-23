@@ -1,5 +1,43 @@
 # Changelog
 
+## [v2.24.1] — 2026-11-23
+
+### Changed
+- **The room voice sounds natural: it catches up in the preacher's pauses, not by
+  speeding up.** The clauses voice started a sentence it was late for on the last
+  one's final sound, and its pace (rising with how late sentences started, up to
+  1.3x, 1.4x in a pile-up) seldom came back to 1x. Replayed with the real clips of
+  2026-11-22, 70 of its 78 minutes were sped up and 403 of the 427 sentences it
+  started late ran straight on from the one before. Now:
+  - **His pauses do the catching up.** A sentence may start up to 4 s before its
+    moment (his first word + the Sentence wait) when the voice is free, so it banks
+    time in his pauses.
+  - **A pause between sentences.** 0.3 s after a full stop, 0.2 s once more than
+    10 s behind, 0.08 s inside a sentence, put into the voice as silence so it
+    never runs dry mid-word.
+  - **Hardly faster.** 1x until 10 s behind, then a little faster, never past
+    1.1x, changed only where a sentence begins, back to 1x under 5 s behind.
+  - **Whole sentences, if anything.** Past 30 s behind, a sentence is left out
+    whole, never its middle; the mid-audio skip stays only past 45 s queued.
+
+  By the same replay over four services
+  (`validation/scripts/voice_natural_sim.py`, real clip lengths from the
+  website's copy of each service): 27 of 288 minutes faster than 1x (was 245),
+  none past 1.1x (was 24 min), 9 sentences run together (was 1,297). It costs a
+  few seconds more behind him at the 90th percentile (15-19 s at a 12 s wait, was
+  13-16 s; 33 s on the fastest service, which also skips 111 s in whole sentences
+  where the steady pace skipped 79 s mid-audio and read 35 min faster than 1.1x).
+
+### Fixed
+- **The end of a sentence's last word no longer waits for the next sentence.** When
+  the voice runs out of audio, which the clauses voice does at nearly every sentence
+  while it holds the next one for its moment, the browser stops about 0.1-0.15 s short
+  of the last sound and plays the rest only when the next clip arrives: after the
+  pause, glued to the next sentence ("hear… ts", heard live on 2026-11-22 with the
+  Soniox voice, whose clips end on their last sound). Now a finished clip with
+  nothing behind it gets 0.3 s of silence just before the voice would run out, and it
+  is the silence that waits. Nothing is added while the voice has more to say.
+
 ## [v2.24.0] — 2026-11-22
 
 ### Added

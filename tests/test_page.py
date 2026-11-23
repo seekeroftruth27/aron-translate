@@ -510,6 +510,132 @@ class AppendingVoice(unittest.TestCase):
         self.assertEqual(self.state()["appended"], [2])
 
 
+def pad_source():
+    """enqueueAudio and the silence after a clip, cut from the real page."""
+    html = read("index.html")
+    a = html.index("function enqueueAudio(")
+    b = html.index("// Follow the playhead down the transcript.", a)
+    return html[a:b]
+
+
+PAD_HARNESS = """
+(function(){
+  var queued = 0, curRate = 1, clauses = true, fallbackMode = false, timers = {}, nextTimer = 1;
+  var AU = {q: [], broken: false, clipStart: true, tail: false, frame: null, padTimer: 0};
+  function fbEnqueue(){} function initAudioOut(){} function pumpAppend(){} function maybeStart(){} function applyDrift(){}
+  function clauseMode(){ return clauses; }
+  function queuedAudioS(){ return queued; }
+  function setTimeout(f, ms){ timers[nextTimer] = {f: f, ms: ms}; return nextTimer++; }
+  function clearTimeout(id){ delete timers[id]; }
+  function b64Bytes(b){ return Uint8Array.from(b); }     // the page's base64; plain byte lists here
+  %SOURCE%
+  return {
+    set: function(o){ if(o.queued != null) queued = o.queued; if(o.clauses != null) clauses = o.clauses; if(o.rate) curRate = o.rate; },
+    feed: function(b64, last){ enqueueAudio(b64, last, null); },
+    fire: function(){ var ids = Object.keys(timers); var t = timers[ids[0]]; delete timers[ids[0]]; AU.padTimer = 0; t.f(); },
+    timers: function(){ return JSON.stringify(Object.keys(timers).map(function(k){ return timers[k].ms; })); },
+    q: function(){ return JSON.stringify(AU.q.map(function(x){ return {n: x.buf.length, el: x.el, head: Array.from(x.buf.slice(0, 4))}; })); },
+    frame: function(b){ var f = mp3Frame(b64Bytes(b)); return f && JSON.stringify({header: Array.from(f.header), s: f.s, bytes: f.bytes}); },
+    silence: function(b, s){ return JSON.stringify(Array.from(mp3Silence(mp3Frame(b64Bytes(b)), s))); }
+  };
+})()
+"""
+
+
+def _mp3(header, frames=3, id3=True):
+    """A clip's opening bytes, as a list: an ID3 tag (if asked) and `frames` frames of junk audio."""
+    ver = (header[1] >> 3) & 3
+    samples, rate = (1152, 44100) if ver == 3 else (576, 24000)
+    length = samples // 8 * 128 * 1000 // rate + ((header[2] >> 1) & 1)
+    tag = b"ID3\x04\x00\x00\x00\x00\x00\x0a" + b"T" * 10 if id3 else b""
+    return list(tag + (bytes(header) + b"\x55" * (length - 4)) * frames)
+
+
+SONIOX = (0xFF, 0xF3, 0xC4, 0xC4)        # MPEG-2 Layer III, 128 kb/s, 24 kHz, mono, no CRC
+ELEVEN = (0xFF, 0xFA, 0x92, 0x64)        # MPEG-1 Layer III, 128 kb/s, 44.1 kHz, padded, with CRC
+
+
+@need_js
+class ClipEndsInSilence(unittest.TestCase):
+    """A MediaSource that runs dry halts 0.1-0.15 s short of its last sample and
+    plays the rest only after the next append, glued to the next clip ("hear… ts",
+    2026-11-22). So a finished clip with nothing behind it gets silence after it,
+    just before the voice would run out, and nothing else does."""
+
+    def setUp(self):
+        self.js = MiniRacer()
+        self.js.eval("var p = " + PAD_HARNESS.replace("%SOURCE%", pad_source()))
+
+    def q(self):
+        return json.loads(self.js.eval("p.q()"))
+
+    def feed(self, last=False, b64=None):
+        self.js.eval("p.feed(%s, %s)" % (json.dumps(b64 if b64 is not None else _mp3(SONIOX)), json.dumps(last)))
+
+    def test_the_frame_shape_of_soniox_and_elevenlabs(self):
+        sx = json.loads(self.js.eval("p.frame(%s)" % json.dumps(_mp3(SONIOX))))
+        self.assertEqual(sx, {"header": [0xFF, 0xF3, 0xC4, 0xC4], "s": 0.024, "bytes": 384})
+        el = json.loads(self.js.eval("p.frame(%s)" % json.dumps(_mp3(ELEVEN, id3=False))))
+        self.assertEqual(el["header"], [0xFF, 0xFB, 0x90, 0x64])      # no CRC, no padding
+        self.assertEqual(el["bytes"], 417)
+
+    def test_the_same_silence_as_the_recorder(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("recorder_pad", os.path.join(ROOT, "app", "recorder.py"))
+        rec = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rec)
+        for header, frame_s in ((SONIOX, 576 / 24000), (ELEVEN, 1152 / 44100)):
+            clip = _mp3(header)
+            mine = bytes(json.loads(self.js.eval("p.silence(%s, %r)" % (json.dumps(clip), frame_s))))
+            theirs, _ = rec.silence(rec._first_frame(bytes(clip)), frame_s)
+            self.assertEqual(mine, theirs)                   # one silent frame, byte for byte
+
+    def test_silence_goes_on_just_before_the_voice_runs_out(self):
+        self.js.eval("p.set({queued: 3})")
+        self.feed(); self.feed(last=True)
+        self.assertEqual(len(self.q()), 2)                    # not yet: 3 s still to play
+        self.assertEqual(json.loads(self.js.eval("p.timers()")), [2600])
+        self.js.eval("p.set({queued: 0.4}); p.fire()")
+        q = self.q()
+        self.assertEqual(len(q), 3)
+        self.assertEqual(q[-1]["head"], [0xFF, 0xF3, 0xC4, 0xC4])
+        self.assertEqual(q[-1]["n"], 384 * 13)               # at least 0.3 s, in 24 ms frames
+        self.assertIsNone(q[-1]["el"])                       # no line of its own
+
+    def test_not_when_the_next_clip_comes_in_time(self):
+        self.js.eval("p.set({queued: 3})")
+        self.feed(last=True)
+        self.js.eval("p.set({queued: 5})")
+        self.feed()                                           # the next clip's first slice
+        self.assertEqual(json.loads(self.js.eval("p.timers()")), [])
+        self.feed(last=True)
+        self.js.eval("p.set({queued: 0.2}); p.fire()")
+        self.assertEqual(len(self.q()), 4)                    # one pad, after the second clip only
+
+    def test_not_in_the_middle_of_a_clip(self):
+        self.js.eval("p.set({queued: 0.1})")
+        self.feed()                                           # still streaming: the voice runs dry mid-word
+        self.assertEqual(len(self.q()), 1)
+        self.assertEqual(json.loads(self.js.eval("p.timers()")), [])
+
+    def test_at_once_when_it_is_already_running_out(self):
+        self.js.eval("p.set({queued: 0.2})")
+        self.feed()
+        self.assertEqual(len(self.q()), 1)
+        self.feed(last=True, b64="")                          # a clip may close with an empty slice
+        self.assertEqual(len(self.q()), 2)
+
+    def test_the_wait_follows_the_pace(self):
+        self.js.eval("p.set({queued: 4.4, rate: 1.25})")
+        self.feed(last=True)
+        self.assertEqual(json.loads(self.js.eval("p.timers()")), [3200])
+
+    def test_not_for_the_continuous_stream(self):
+        self.js.eval("p.set({queued: 0.2, clauses: false})")
+        self.feed(last=True)
+        self.assertEqual(len(self.q()), 1)
+
+
 def direction_source():
     """From `let autoFlip` to renderLangUI: Auto and Swap, the direction's two controls."""
     html = read("index.html")
@@ -577,7 +703,7 @@ def hold_source():
 
 HOLD_HARNESS = """
 (function(){
-  var now = 0, queued = 0, curRate = 1, fallbackMode = false, clauseRate = 1;
+  var now = 0, queued = 0, curRate = 1, fallbackMode = false, clauseRate = 1, logged = [];
   var AUQ = {timer: 0, lastText: null, freeAt: 0}, AU = {el: null};
   function clauseMode(){ return true; }
   function applyDrift(){}
@@ -586,100 +712,208 @@ HOLD_HARNESS = """
   function queuedAudioS(){ return queued; }
   function drainAudioTickets(){}
   function setTimeout(){ return 1; }
+  function log(kind, msg){ logged.push(msg); }
+  function jEvent(){}
   %SOURCE%
   return {
     set: function(o){ now = o.now; queued = o.queued || 0; AUQ.lastText = o.last; AUQ.freeAt = o.freeAt || 0; AUQ.timer = 0; },
-    hold: function(spokeMs, bytes){ return holdTicket({spokeMs: spokeMs, slices: [[new Array((bytes || 0) + 1).join('A'), false]]}); },
-    pace: function(){ return clauseRate; }
+    hold: function(spokeMs, text){
+      var slot = {spokeMs: spokeMs, text: text === undefined ? 'He spoke.' : text, slices: [['AAAA', false]]};
+      var held = holdTicket(slot);
+      return JSON.stringify({held: held, lead: slot.lead || 0, drop: !!slot.drop});
+    },
+    pace: function(){ return clauseRate; },
+    dropping: function(){ return natDropping; },
+    logged: function(){ return JSON.stringify(logged); }
+  };
+})()
+"""
+
+DUE = 22000      # his first word at 10 s + the 12 s delay
+
+
+class _Hold(unittest.TestCase):
+    def setUp(self):
+        self.js = MiniRacer()
+        self.js.eval("var h = " + HOLD_HARNESS.replace("%SOURCE%", hold_source()))
+
+    def go(self, now, queued=0, last="Amen.", freeAt=0, text="He spoke."):
+        """A clip whose first word he said at 10 s, offered at `now` ms with
+        `queued` s of speech still ahead of it."""
+        self.js.eval("h.set(%s)" % json.dumps({"now": now, "queued": queued, "last": last, "freeAt": freeAt}))
+        return json.loads(self.js.eval("h.hold(10000, %s)" % json.dumps(text)))
+
+    def late_by(self, s, text="He spoke."):
+        """A new sentence that can start `s` seconds after its moment (the voice
+        busy until then)."""
+        return self.go(DUE + s * 1000 - 2000, queued=2, text=text)
+
+
+@need_js
+class ASentenceStartsInHisPause(_Hold):
+    """A sentence starts at its moment less NAT_EARLY, or a natural gap after the
+    voice falls quiet, whichever is later (2026-11-22)."""
+
+    def test_well_before_its_moment_it_waits(self):
+        self.assertTrue(self.go(15000)["held"])                 # its start, 18 000, is 3 s off
+
+    def test_up_to_4_s_early_with_silence_in_front(self):
+        r = self.go(16600)                                      # 1.4 s before 18 000
+        self.assertFalse(r["held"])
+        self.assertAlmostEqual(r["lead"], 1.4, places=3)
+
+    def test_a_closing_quote_after_the_full_stop_still_ends_the_sentence(self):
+        self.assertTrue(self.go(15000, last='and He will be gracious to me."', freeAt=15500)["held"])
+
+    def test_when_late_it_starts_after_a_sentence_gap_not_on_the_last_sound(self):
+        r = self.go(25000, queued=2)                            # the voice busy until 27 000, 5 s late
+        self.assertFalse(r["held"])
+        self.assertAlmostEqual(r["lead"], 0.3, places=3)
+
+    def test_far_behind_the_gap_narrows_but_stays(self):
+        r = self.go(30000, queued=4)                            # quiet at 34 000, 12 s late
+        self.assertAlmostEqual(r["lead"], 0.2, places=3)
+
+
+@need_js
+class TheRestOfASentenceFollowsOn(_Hold):
+    """A clip carrying on the sentence the voice was just speaking follows after a
+    short clause gap, whatever its moment."""
+
+    def test_while_the_voice_speaks(self):
+        r = self.go(15000, queued=1, last="beyond a life of obedience,", freeAt=16000)
+        self.assertFalse(r["held"])
+        self.assertAlmostEqual(r["lead"], 0.08, places=3)
+
+    def test_within_the_grace_after_it_falls_silent(self):
+        self.assertFalse(self.go(16800, last="beyond a life of obedience,", freeAt=15500)["held"])
+
+    def test_long_after_it_waits_like_a_new_sentence(self):
+        self.assertTrue(self.go(15000, last="beyond a life of obedience,", freeAt=13000)["held"])
+
+    def test_it_keeps_the_pace(self):
+        for _ in range(3):
+            self.late_by(20)
+        p = self.js.eval("h.pace()")
+        self.go(DUE + 25000, queued=1, last="beyond a life of obedience,", freeAt=DUE + 26000)
+        self.assertEqual(self.js.eval("h.pace()"), p)
+
+
+@need_js
+class HardlyFaster(_Hold):
+    """Under 10 s behind it reads at 1x; past that a little faster, never past
+    1.1x, set where a sentence begins, back to 1x once under 5 s behind."""
+
+    def pace(self, late):
+        self.assertFalse(self.late_by(late)["held"])
+        return self.js.eval("h.pace()")
+
+    def test_on_time_and_a_little_late_read_at_1x(self):
+        for late in (0, 3, 8, 10):
+            self.assertEqual(self.pace(late), 1)
+
+    def test_past_10_s_a_little_faster(self):
+        self.assertEqual(self.pace(12.3), 1.02)
+        self.assertEqual(self.pace(15.3), 1.06)
+
+    def test_never_past_1_1(self):
+        self.assertEqual(self.pace(29), 1.1)
+
+    def test_it_holds_until_under_5_s_then_back_to_1x(self):
+        self.pace(20)
+        self.assertEqual(self.pace(7), 1.1)
+        self.assertEqual(self.pace(4.5), 1)
+
+
+@need_js
+class LeftOutWholeNeverHalved(_Hold):
+    """Past 30 s behind a whole sentence is left out, with the rest of it; a piece
+    carrying on a sentence only past 40 s."""
+
+    def test_a_sentence_30_s_late_is_left_out(self):
+        self.assertTrue(self.late_by(31)["drop"])
+        self.assertIn("left out a sentence, 31 s behind him", self.js.eval("h.logged()"))
+
+    def test_and_the_rest_of_it_too(self):
+        self.assertTrue(self.late_by(31, text="for we are His workmanship,")["drop"])
+        self.assertTrue(self.js.eval("h.dropping()"))
+        self.assertTrue(self.go(DUE, text="created for good works.")["drop"])     # whatever its time
+        self.assertFalse(self.js.eval("h.dropping()"))
+        self.assertFalse(self.go(16600)["drop"])                                  # the next sentence plays
+
+    def test_a_clip_with_no_words_ends_the_run(self):
+        self.late_by(31, text=None)
+        self.assertFalse(self.js.eval("h.dropping()"))
+
+    def test_a_piece_carrying_on_waits_until_40_s(self):
+        last = dict(last="beyond a life of obedience,")
+        self.assertFalse(self.go(DUE + 33000, queued=1, freeAt=DUE + 34000, **last)["drop"])
+        self.assertTrue(self.go(DUE + 40000, queued=1, freeAt=DUE + 41000, **last)["drop"])
+
+
+def drain_source():
+    """From audioSlice to resetAudioTickets: how a held clip is fed or left out."""
+    html = read("index.html")
+    a = html.index("function audioSlice(")
+    b = html.index("// Where each batch's speech sits on the one timeline", a)
+    return html[a:b]
+
+
+DRAIN_HARNESS = """
+(function(){
+  var fed = [], verdict = {held: false, lead: 0, drop: false}, curRate = 1, fallbackMode = false;
+  var AUQ = {next: 0, serving: 0, held: new Map(), timer: 0, lastText: null, freeAt: 0};
+  var AU = {q: [], frame: null, broken: false}, clauseRate = 1, natPace = 1, natDropping = false, paceAt = null;
+  function holdTicket(slot){ if(verdict.held) return true; slot.lead = verdict.lead; if(verdict.drop) slot.drop = true; return false; }
+  function enqueueAudio(b64, last, el){ fed.push('clip:' + b64); }
+  function queuedAudioS(){ return 0; }
+  function epochNow(){ return 0; }
+  function b64Bytes(b){ return [1, 2, 3]; }
+  function mp3Frame(u){ return {s: 0.024, bytes: 384, header: [255]}; }
+  function mp3Silence(f, seconds){ return {silence: seconds}; }
+  function clearSpeaking(){}
+  function clearTimeout(){}
+  %SOURCE%
+  return {
+    run: function(v, slices){
+      verdict = v; fed = []; AU.q = []; AUQ.held.clear(); AUQ.serving = 0; AUQ.next = 0;
+      AUQ.held.set(0, {slices: slices, done: true, el: null, spokeMs: 1});
+      drainAudioTickets();
+      return JSON.stringify({fed: fed, q: AU.q.map(function(x){ return x.buf.silence; })});
+    }
   };
 })()
 """
 
 
 @need_js
-class ASentencesNextClipFollowsOn(unittest.TestCase):
-    """A clip carrying on the sentence the voice was just speaking plays straight
-    on; anything else waits for its moment, his first word + the delay."""
+class ThePauseIsSilenceInTheTimeline(unittest.TestCase):
+    """The gap goes into the timeline as silence in front of the clip, so the
+    voice never runs dry in it; a clip left out never reaches the speaker."""
 
     def setUp(self):
         self.js = MiniRacer()
-        self.js.eval("var h = " + HOLD_HARNESS.replace("%SOURCE%", hold_source()))
+        self.js.eval("var d = " + DRAIN_HARNESS.replace("%SOURCE%", drain_source()))
 
-    def held(self, **o):
-        self.js.eval("h.set(%s)" % json.dumps(o))
-        return self.js.eval("h.hold(%d)" % 10000)     # due at 22 000 ms
+    def run_(self, **v):
+        verdict = {"held": False, "lead": 0, "drop": False, **v}
+        return json.loads(self.js.eval("d.run(%s, [['AAAA', false], ['BBBB', true]])" % json.dumps(verdict)))
 
-    def test_a_new_sentence_waits_for_its_moment(self):
-        self.assertTrue(self.held(now=15000, last="there must be prayer.", freeAt=15500))
+    def test_silence_goes_in_first(self):
+        r = self.run_(lead=0.3)
+        self.assertEqual(r["q"], [0.3])
+        self.assertEqual(r["fed"], ["clip:AAAA", "clip:BBBB"])
 
-    def test_the_rest_of_a_sentence_follows_while_the_voice_speaks(self):
-        self.assertFalse(self.held(now=15000, last="beyond a life of obedience,", freeAt=15500))
+    def test_no_gap_no_silence(self):
+        self.assertEqual(self.run_()["q"], [])
 
-    def test_and_within_the_grace_after_it_falls_silent(self):
-        self.assertFalse(self.held(now=16800, last="beyond a life of obedience,", freeAt=15500))
+    def test_a_clip_left_out_is_not_heard(self):
+        r = self.run_(drop=True)
+        self.assertEqual(r["fed"], [])
+        self.assertEqual(r["q"], [])
 
-    def test_but_not_long_after(self):
-        self.assertTrue(self.held(now=17200, last="beyond a life of obedience,", freeAt=15500))
-
-    def test_a_closing_quote_after_the_full_stop_still_ends_the_sentence(self):
-        self.assertTrue(self.held(now=15000, last='and He will be gracious to me."', freeAt=15500))
-
-
-@need_js
-class OneSteadyPace(unittest.TestCase):
-    """The clauses voice reads at one pace that rises quickly when sentences
-    start late, falls slowly, ignores small wobbles, and changes only at a
-    sentence's start (2026-11-21)."""
-
-    def setUp(self):
-        self.js = MiniRacer()
-        self.js.eval("var h = " + HOLD_HARNESS.replace("%SOURCE%", hold_source()))
-
-    def start(self, late, queued=0, last="Amen.", b64=0):
-        """A new sentence (his first word at 10 s, due at 22 s) whose turn comes `late` s late."""
-        self.js.eval("h.set(%s)" % json.dumps({"now": 22000 + late * 1000, "queued": queued, "last": last}))
-        self.assertFalse(self.js.eval("h.hold(10000, %d)" % b64))
-        return self.js.eval("h.pace()")
-
-    def test_on_time_sentences_read_at_1x(self):
-        for _ in range(5):
-            self.assertEqual(self.start(0), 1)
-
-    def test_a_small_wobble_does_not_change_it(self):
-        self.assertEqual(self.start(1), 1)
-        self.assertEqual(self.start(-0.0), 1)
-
-    def test_late_sentences_raise_it_quickly(self):
-        paces = [self.start(6) for _ in range(4)]
-        self.assertGreater(paces[0], 1)
-        self.assertEqual(paces, sorted(paces))
-        self.assertGreaterEqual(paces[-1], 1.1)
-
-    def test_it_falls_slowly_and_never_past_1x(self):
-        for _ in range(6):
-            high = self.start(8)
-        after = [self.start(0) for _ in range(5)]
-        self.assertGreater(after[-1], 1)
-        self.assertLess(high - after[-1], 0.15)
-        for _ in range(80):
-            low = self.start(0)
-        self.assertEqual(low, 1)
-
-    def test_capped_at_1_3(self):
-        for _ in range(30):
-            p = self.start(30)
-        self.assertEqual(p, 1.3)
-
-    def test_a_pile_up_reads_faster_for_that_sentence_only(self):
-        self.assertEqual(self.start(0, b64=350000), 1.4)    # its own 16 s of audio
-        self.assertEqual(self.start(0), 1)
-
-    def test_the_rest_of_a_sentence_keeps_the_pace(self):
-        for _ in range(4):
-            p = self.start(8)
-        self.js.eval("h.set(%s)" % json.dumps({"now": 15000, "last": "beyond a life of obedience,", "freeAt": 15500}))
-        self.assertFalse(self.js.eval("h.hold(10000)"))
-        self.assertEqual(self.js.eval("h.pace()"), p)
+    def test_a_held_clip_waits(self):
+        self.assertEqual(self.run_(held=True)["fed"], [])
 
 
 def delay_source():
