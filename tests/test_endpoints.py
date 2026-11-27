@@ -5,7 +5,9 @@ settings and sessions round-trip, and bad input is refused.
     python -m unittest discover -s tests -v
 """
 import json
+import time
 import unittest
+from unittest import mock
 
 from support import load_server, need_flask
 
@@ -268,6 +270,51 @@ class PoolPermission(Endpoints):
     def test_a_request_without_an_origin_is_unchanged(self):
         r = self.c.get("/pipe-status")
         self.assertNotIn("Access-Control-Allow-Origin", r.headers)
+
+    def test_the_voice_lanes_may_post_and_read_their_streams(self):
+        # the voice and the translator are posted to 127.0.0.5-7 (voiceFetch)
+        for path in ("/speak-stream", "/translate"):
+            r = self.c.options(path, headers={"Origin": self.own,
+                                              "Access-Control-Request-Method": "POST",
+                                              "Access-Control-Request-Headers": "content-type"})
+            self.assertEqual(r.headers["Access-Control-Allow-Origin"], self.own, path)
+            self.assertIn("POST", r.headers["Access-Control-Allow-Methods"], path)
+
+
+class VoiceTiming(Endpoints):
+    """A clip's first audio line says how long its request has been on the server, so the
+    page can tell time queued in the browser from time spent waiting here."""
+
+    def setUp(self):
+        self.server = load_server()
+
+    def lines(self, meta):
+        def fake(text, stats=None, **opts):
+            stats["ttfb_ms"] = 40
+            yield b"one"
+            yield b"two"
+        with mock.patch.object(self.server, "synthesize_stream", fake):
+            return [json.loads(x) for x in self.server._tts_chunk_lines("Amin.", {"provider": "soniox"}, meta)]
+
+    def test_the_first_line_counts_from_the_request(self):
+        out = self.lines({"t_in": time.monotonic() - 0.5})
+        self.assertGreaterEqual(out[0]["in_ms"], 500)
+        self.assertLess(out[0]["in_ms"], 5000)
+        self.assertEqual(out[0]["ttfb_ms"], 40)
+        self.assertNotIn("in_ms", out[1])
+
+    def test_a_one_chunk_clip_carries_it_too(self):
+        def fake(text, stats=None, **opts):
+            yield b"only"
+        with mock.patch.object(self.server, "synthesize_stream", fake):
+            out = [json.loads(x) for x in self.server._tts_chunk_lines(
+                "Amin.", {"provider": "soniox"}, {"t_in": time.monotonic()})]
+        self.assertTrue(out[0]["last"])
+        self.assertIn("in_ms", out[0])
+
+    def test_no_stamp_no_number(self):
+        self.assertNotIn("in_ms", self.lines({"src": "x"})[0])
+        self.assertNotIn("in_ms", self.lines(None)[0])
 
 
 class CaptionStore(Endpoints):

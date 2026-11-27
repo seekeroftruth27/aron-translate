@@ -1,5 +1,56 @@
 # Changelog
 
+## [v2.24.3] — 2026-11-27
+
+### Changed
+- **The voice and the translator get connection lanes of their own, and the page
+  counts a stream as open until it ends.** On 2026-11-22, for 39 s and then 48 s,
+  every Decision Router check from the page timed out while the server answered the
+  ones that got through in its usual 215 ms. In the same stretches the voice fell
+  34-38 s behind. Each voice request holds a connection until its clip comes, and
+  together they filled the browser's six connections to `localhost:5000`. Now:
+  - **Voice lanes.** `/speak-stream` and `/translate` go to `127.0.0.5`, `.6` and
+    `.7`, each request to the lane with the fewest open, six to a lane (18
+    connections). They use the same probe and fallback as v2.24.2's pools. The
+    Router, quote checks and session saves keep `localhost` to themselves. A request
+    the page aborts itself no longer counts as a pool failure.
+  - **In order.** The clauses voice builds its clips in the order requests reach the
+    server. One address kept that order, because the browser sends an address's
+    waiting requests in turn. Three lanes would not, so when all 18 connections are
+    busy a request waits in the page, and each one that ends sends the oldest.
+  - **Streams counted to their end.** A streamed answer counts as open until its
+    body ends, not when its headers come. `projector push slow … open when it left`
+    now names each address (`/speak-stream×3 @127.0.0.5`). Flask sends a stream's
+    headers with its first line, so a voice request waiting for its moment was
+    already counted. What was missed is its audio, a caption's later sentences, and a
+    translation's voice after its text.
+  - **Voice timing in the session record.** Each spoken row gets `voice`: `sent`,
+    `due_s`, and in ms after sending, `first` (first audio here), `in` (the same,
+    counted from when the request reached the server), `ttfb`, `queue`, `end` and
+    `err`. `first` less `in` is the time the request waited in the browser for a
+    connection. `in` less `queue` and `ttfb` is about how long the server held it
+    for its moment. The server adds `in_ms` to each clip's first audio line.
+  - **One Attendant poll at a time.** `/verse-feed` was polled four times a second
+    with no check that the last poll had come back. A second's hiccup on the server
+    would have put four more requests a second on `localhost`, where the Router checks
+    and the sentence-end scores (`/sat`) wait.
+  - Checked in headless Chromium against the real server: nine held voice
+    requests spread 3/3/3 over the lanes while six small requests to `localhost`
+    answered in 15-19 ms. The old way, six held requests on `localhost` made a small
+    one wait 2.8 s. Twenty at once: six to a lane, and the two that waited reached the
+    server after the first eighteen, in order.
+- **A finished sentence is read straight away.** The voice used to hold every
+  sentence until the preacher's first word + the Sentence wait less 4 s (8 s at the
+  12 s default), even when he had finished it well before. Now a clip that ends a
+  sentence starts as soon as the voice falls quiet, after the usual short gap; only a
+  piece cut at a comma, because its sentence ran past the wait, still waits for its
+  moment. The Sentence wait is now the longest a sentence waits for its full stop,
+  counted from its own first word. Replayed with the real clips of four services
+  (`validation/scripts/voice_natural_sim.py`, player `now`), the voice sits a little
+  closer to him (22 Nov morning: median 8.3 s behind, was 9.0; 90th percentile 14.4 s,
+  was 15.3) and pauses longer between sentences more often (silences over 4 s: 75, was
+  43), since it now finishes a sentence and then waits for his next one.
+
 ## [v2.24.2] — 2026-11-23
 
 ### Changed

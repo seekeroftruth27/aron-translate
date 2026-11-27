@@ -750,29 +750,59 @@ class _Hold(unittest.TestCase):
         return self.go(DUE + s * 1000 - 2000, queued=2, text=text)
 
 
+PIECE = "for the love of God is patient,"       # a clip cut at a comma: its sentence goes on
+
+
 @need_js
-class ASentenceStartsInHisPause(_Hold):
-    """A sentence starts at its moment less NAT_EARLY, or a natural gap after the
-    voice falls quiet, whichever is later (2026-11-22)."""
+class AFinishedSentenceGoesNow(_Hold):
+    """A clip that ends a sentence does not wait for its moment: it starts a
+    sentence gap after the voice falls quiet, however early (2026-11-23)."""
+
+    def test_well_before_its_moment_it_goes(self):
+        r = self.go(15000)                                      # its moment less 4 s is 18 000
+        self.assertFalse(r["held"])
+        self.assertAlmostEqual(r["lead"], 0.3, places=3)
+
+    def test_after_the_voice_has_said_what_it_has(self):
+        r = self.go(12000, queued=1.5)                          # quiet at 13 500
+        self.assertFalse(r["held"])
+        self.assertAlmostEqual(r["lead"], 0.3, places=3)
+
+    def test_a_closing_quote_after_the_full_stop_ends_it_too(self):
+        self.assertFalse(self.go(12000, text='and He will be gracious to me."')["held"])
+
+    def test_early_it_reads_at_1x(self):
+        self.go(12000)
+        self.assertEqual(self.js.eval("h.pace()"), 1)
+
+
+@need_js
+class AnUnfinishedPieceWaitsForItsMoment(_Hold):
+    """A piece cut before its full stop, not carrying on the sentence just spoken,
+    starts at its moment less NAT_EARLY, or a natural gap after the voice falls
+    quiet, whichever is later (2026-11-22)."""
 
     def test_well_before_its_moment_it_waits(self):
-        self.assertTrue(self.go(15000)["held"])                 # its start, 18 000, is 3 s off
+        self.assertTrue(self.go(15000, text=PIECE)["held"])     # its start, 18 000, is 3 s off
 
     def test_up_to_4_s_early_with_silence_in_front(self):
-        r = self.go(16600)                                      # 1.4 s before 18 000
+        r = self.go(16600, text=PIECE)                          # 1.4 s before 18 000
         self.assertFalse(r["held"])
         self.assertAlmostEqual(r["lead"], 1.4, places=3)
 
-    def test_a_closing_quote_after_the_full_stop_still_ends_the_sentence(self):
-        self.assertTrue(self.go(15000, last='and He will be gracious to me."', freeAt=15500)["held"])
+    def test_after_a_closing_quote_the_next_piece_is_new(self):
+        self.assertTrue(self.go(15000, last='and He will be gracious to me."', freeAt=15500, text=PIECE)["held"])
+
+    def test_a_clip_whose_words_are_unknown_waits_too(self):
+        self.assertTrue(self.go(15000, text=None)["held"])
 
     def test_when_late_it_starts_after_a_sentence_gap_not_on_the_last_sound(self):
-        r = self.go(25000, queued=2)                            # the voice busy until 27 000, 5 s late
+        r = self.go(25000, queued=2, text=PIECE)                # the voice busy until 27 000, 5 s late
         self.assertFalse(r["held"])
         self.assertAlmostEqual(r["lead"], 0.3, places=3)
 
     def test_far_behind_the_gap_narrows_but_stays(self):
-        r = self.go(30000, queued=4)                            # quiet at 34 000, 12 s late
+        r = self.go(30000, queued=4, text=PIECE)                # quiet at 34 000, 12 s late
         self.assertAlmostEqual(r["lead"], 0.2, places=3)
 
 
@@ -789,8 +819,9 @@ class TheRestOfASentenceFollowsOn(_Hold):
     def test_within_the_grace_after_it_falls_silent(self):
         self.assertFalse(self.go(16800, last="beyond a life of obedience,", freeAt=15500)["held"])
 
-    def test_long_after_it_waits_like_a_new_sentence(self):
-        self.assertTrue(self.go(15000, last="beyond a life of obedience,", freeAt=13000)["held"])
+    def test_long_after_it_is_new_and_waits_if_unfinished(self):
+        self.assertTrue(self.go(15000, last="beyond a life of obedience,", freeAt=13000, text=PIECE)["held"])
+        self.assertFalse(self.go(15000, last="beyond a life of obedience,", freeAt=13000)["held"])
 
     def test_it_keeps_the_pace(self):
         for _ in range(3):
@@ -960,3 +991,95 @@ class SentenceWait(unittest.TestCase):
     def test_expression_tags_wait_at_least_8_s(self):
         self.assertEqual(self.delay(slider=6, tags=True), 8)
         self.assertEqual(self.delay(slider=10, tags=True), 10)
+
+
+def lanes_source():
+    """voiceFetch and voiceSend: the voice's lanes, cut from the real page."""
+    html = read("index.html")
+    a = html.index("const VOICE_LANES=")
+    b = html.index("// ---- latency metrics", a)
+    return html[a:b]
+
+
+LANES_HARNESS = """
+(function(){
+  var sent = [], open = {}, out = [], sigs = {};
+  var poolOn = {v1: true, v2: true, v3: true};
+  var POOL_ADDR = {v1: '127.0.0.5', v2: '127.0.0.6', v3: '127.0.0.7'};
+  function openOn(host){ return open[host] || 0; }
+  function DOMException(m, n){ this.message = m; this.name = n; }
+  function poolFetch(name, path, init){
+    open[POOL_ADDR[name]] = openOn(POOL_ADDR[name]) + 1;
+    sent.push([name, JSON.parse(init.body).n]);
+    return Promise.resolve('r');
+  }
+  function fetch(path, init){ sent.push(['page', JSON.parse(init.body).n]); return Promise.resolve('r'); }
+  function signal(){
+    var s = {aborted: false, l: []};
+    s.addEventListener = function(t, f){ s.l.push(f); };
+    s.abort = function(){ s.aborted = true; s.reason = new DOMException('aborted', 'AbortError'); s.l.forEach(function(f){ f(); }); };
+    return s;
+  }
+  %SOURCE%
+  return {
+    send: function(n, abortable){
+      var init = {body: JSON.stringify({n: n})};
+      if(abortable) init.signal = sigs[n] = signal();
+      voiceFetch('/speak-stream', init).then(function(){ out.push('ok ' + n); }, function(e){ out.push(e.name + ' ' + n); });
+    },
+    end: function(lane){ open[POOL_ADDR[lane]]--; voiceSend(); },   // a request on that lane ended
+    abort: function(n){ sigs[n].abort(); },
+    off: function(lane){ poolOn[lane] = false; },
+    state: function(){ return JSON.stringify({sent: sent, waiting: voiceQ.length, out: out}); }
+  };
+})()
+"""
+
+
+@need_js
+class VoiceLanesKeepOrder(unittest.TestCase):
+    """The voice's requests go out in the order they were made: the server's clauses
+    voice builds its clips in the order they arrive. Six to a lane, then they wait."""
+
+    def setUp(self):
+        self.js = MiniRacer()
+        self.js.eval("var v = " + LANES_HARNESS.replace("%SOURCE%", lanes_source()))
+
+    def state(self):
+        return json.loads(self.js.eval("v.state()"))
+
+    def send(self, *ns, **kw):
+        for n in ns:
+            self.js.eval("v.send(%d, %s)" % (n, "true" if kw.get("abortable") else "false"))
+
+    def test_six_to_a_lane_then_the_rest_wait_their_turn(self):
+        self.send(*range(1, 21))
+        st = self.state()
+        self.assertEqual([n for _, n in st["sent"]], list(range(1, 19)))
+        self.assertEqual(sorted(l for l, _ in st["sent"]), ["v1"] * 6 + ["v2"] * 6 + ["v3"] * 6)
+        self.assertEqual(st["waiting"], 2)
+        self.js.eval("v.end('v3')")                 # whichever lane frees, the oldest goes
+        self.assertEqual(self.state()["sent"][-1], ["v3", 19])
+        self.js.eval("v.end('v1')")
+        self.assertEqual(self.state()["sent"][-1], ["v1", 20])
+        self.assertEqual(self.state()["waiting"], 0)
+
+    def test_one_given_up_on_while_waiting_leaves_the_line(self):
+        self.send(*range(1, 19))
+        self.send(19, abortable=True)
+        self.send(20)
+        self.js.eval("v.abort(19)")
+        self.assertIn("AbortError 19", self.state()["out"])
+        self.js.eval("v.end('v2')")
+        st = self.state()
+        self.assertEqual(st["sent"][-1], ["v2", 20])
+        self.assertNotIn(19, [n for _, n in st["sent"]])
+
+    def test_with_no_lane_left_the_waiting_go_to_the_page_in_order(self):
+        self.send(*range(1, 21))
+        for lane in ("v1", "v2", "v3"):
+            self.js.eval("v.off('%s')" % lane)
+        self.js.eval("v.end('v1')")
+        self.assertEqual(self.state()["sent"][-2:], [["page", 19], ["page", 20]])
+        self.send(21)
+        self.assertEqual(self.state()["sent"][-1], ["page", 21])

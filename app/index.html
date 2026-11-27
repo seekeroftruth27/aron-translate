@@ -691,7 +691,7 @@
         <select id="ttsOut"><option value="">This window (default)</option></select></label>
       <div class="f" id="speedWrap" title="Soniox speaking rate."><span>Speed <b class="v" id="speedV">1.00×</b></span>
         <input type="range" id="speed" min="70" max="120" step="5" value="100" aria-label="Speed"></div>
-      <div class="f" id="delayWrap" title="How far behind the preacher the voice speaks (up to 4 s sooner in a pause of his, to catch up there rather than by speeding up). A longer wait lets it read whole sentences instead of cutting them at a comma. With Expression tags on it waits at least 8 s, so each clip has time to be styled. Applies from the next sentence."><span>Sentence wait <b class="v" id="delayV">12 s</b></span>
+      <div class="f" id="delayWrap" title="The longest the voice waits for the preacher to finish a sentence. A sentence he has finished is read straight away; one still going after this long is cut at a comma. A longer wait lets it read whole sentences instead of cutting them, at the cost of falling further behind on long ones. With Expression tags on it waits at least 8 s, so each clip has time to be styled. Applies from the next sentence."><span>Sentence wait <b class="v" id="delayV">12 s</b></span>
         <input type="range" id="voiceDelay" min="6" max="12" step="1" value="12" aria-label="Sentence wait">
         <p class="help" id="delayHelp"></p></div>
       <label class="f" id="exprWrap" title="A model of its own (Claude Haiku 5.5, or Luna without an Anthropic key) reads what has been said and styles each clip for the voice: a delivery tag such as [earnestly] where a sentence begins, a word or two in capitals, a pause. It never changes a word. Off: the voice reads plainly. Applies from the next sentence."><div>Expression tags<p class="help">Tags, emphasis and pauses, from its own model.</p></div>
@@ -1210,35 +1210,59 @@ function renderLog(){ diagLog.textContent=''; LOG.forEach(appendLogLine); }
 // (localhost:5000); the rest wait in line. A few requests that stay open while a
 // provider stalls (the voice, a translation) can fill all six, and then a tiny
 // caption push waits behind them -- the room's projector freezes while this page
-// carries on. This counts what is open, per path, so that a slow push can say
-// what was in its way (see netCap). Wraps fetch only for requests to this server.
-const OPEN_REQ=new Map();   // id -> {path, t0}
+// carries on. This counts what is open, per address and path, so that a slow push
+// can say what was in its way (see netCap) and the voice can take its least busy
+// lane (voiceFetch). Wraps fetch only for requests to this server.
+const OPEN_REQ=new Map();   // id -> {host, path, t0}
 let openReqSeq=0;
+// A streamed answer (NDJSON: the voice, a translation) holds its connection until
+// its body ends, not until its headers come, so it is counted until then. Flask sends
+// the headers with the first line: a /speak-stream waiting for its moment was always
+// counted, but not its audio, a caption's later sentences, or a translation's voice
+// after its text.
+const STREAMED=/ndjson|event-stream/i;
 (function(){
   const f=window.fetch.bind(window);
   window.fetch=function(input,init){
-    let path='';
+    let host='', path='';
     try{
       const u=new URL(typeof input==='string'?input:input.url, location.href);
-      if(u.hostname==='localhost'||/^127\./.test(u.hostname)||u.host===location.host) path=u.pathname;
+      if(u.hostname==='localhost'||/^127\./.test(u.hostname)||u.host===location.host){ host=u.hostname; path=u.pathname; }
     }catch(e){}
     if(!path) return f(input,init);
     const id=++openReqSeq;
-    OPEN_REQ.set(id,{path,t0:performance.now()});
-    // Counted from the send until the answer's headers arrive (or it fails): that
-    // covers the wait in the browser's queue and the server's own work, which is where
-    // a stalled provider shows. Bodies are never touched, so a streamed answer (the
-    // voice, a translation) reads exactly as before.
-    const done=()=>{ OPEN_REQ.delete(id); };
-    return f(input,init).then(r=>{ done(); return r; },e=>{ done(); throw e; });
+    OPEN_REQ.set(id,{host,path,t0:performance.now()});
+    const done=()=>{ OPEN_REQ.delete(id); if(voiceQ.length) setTimeout(voiceSend,0); };   // a connection is free
+    return f(input,init).then(r=>{
+      if(r.body && STREAMED.test(r.headers.get('Content-Type')||'')) return untilBodyEnds(r,done);
+      done(); return r;
+    },e=>{ done(); throw e; });
   };
 })();
+// The same answer, read through a stream that calls done() when the body ends,
+// fails or is cancelled (an abort included); the caller reads it exactly as before.
+function untilBodyEnds(r,done){
+  const src=r.body.getReader();
+  try{
+    return new Response(new ReadableStream({
+      pull(c){ return src.read().then(x=>{ if(x.done){ done(); c.close(); } else c.enqueue(x.value); },
+                                      e=>{ done(); c.error(e); }); },
+      cancel(why){ done(); return src.cancel(why); }
+    }),{status:r.status, statusText:r.statusText, headers:r.headers});
+  }catch(e){ src.releaseLock(); done(); return r; }
+}
 function openReqSummary(){
   const by={}, now=performance.now(); let n=0;
-  for(const v of OPEN_REQ.values()){ if(now-v.t0>120000) continue; by[v.path]=(by[v.path]||0)+1; n++; }
-  const parts=Object.entries(by).sort((x,y)=>y[1]-x[1]).map(([k,n])=>k+(n>1?'×'+n:''));
+  for(const [id,v] of OPEN_REQ){
+    if(now-v.t0>120000){ OPEN_REQ.delete(id); continue; }   // a body no one read to its end
+    const k=v.path+'|'+(v.host===location.hostname?'':' @'+v.host);
+    by[k]=(by[k]||0)+1; n++;
+  }
+  const parts=Object.entries(by).sort((x,y)=>y[1]-x[1])
+    .map(([k,n])=>{ const [p,at]=k.split('|'); return p+(n>1?'×'+n:'')+at; });
   return {n, text:parts.join(', ')||'none'};
 }
+function openOn(host){ let n=0; for(const v of OPEN_REQ.values()) if(v.host===host) n++; return n; }
 
 // ---- connection pools --------------------------------------------------------
 // To the browser each address is its own queue of about 6 connections. Everything the
@@ -1247,12 +1271,14 @@ function openReqSummary(){
 // room. These go to the same server at their own loopback address instead: the web
 // relay posts (/publish) to 127.0.0.2, ProPresenter (/project) to 127.0.0.3, the
 // spoken clips (/publish-audio) to 127.0.0.4. (The projector's captions, /caption,
-// use 127.0.0.1 -- see netCap.) The server lets the page's own address read their
+// use 127.0.0.1 -- see netCap.) The voice and the translator have lanes of their
+// own, 127.0.0.5-7 (voiceFetch). The server lets the page's own address read their
 // answers (server.py _pool_cors).
 // A pool is used only after a probe from this page reached it, and drops back to the
-// page's own address for good on its second failure in a row, so nothing is ever
-// sent anywhere that does not answer.
-const POOL_ADDR={pub:'127.0.0.2', proj:'127.0.0.3', audio:'127.0.0.4'};
+// page's own address for good on its second failure in a row (a request this page
+// aborted itself is not one), so nothing is ever sent anywhere that does not answer.
+const POOL_ADDR={pub:'127.0.0.2', proj:'127.0.0.3', audio:'127.0.0.4',
+                 v1:'127.0.0.5', v2:'127.0.0.6', v3:'127.0.0.7'};
 const poolOn={}, poolFail={};
 function poolUrl(name,path){
   return (poolOn[name]&&location.hostname==='localhost'&&location.port)
@@ -1261,7 +1287,7 @@ function poolUrl(name,path){
 function poolFetch(name,path,init){
   const url=poolUrl(name,path), cross=url!==path;
   return fetch(url,init).then(r=>{ poolFail[name]=0; return r; },e=>{
-    if(cross && (poolFail[name]=(poolFail[name]||0)+1)>=2){
+    if(cross && e.name!=='AbortError' && (poolFail[name]=(poolFail[name]||0)+1)>=2){
       poolOn[name]=false;
       log('warn','connection pool '+name+' ('+POOL_ADDR[name]+') failed twice: back to the page’s own address');
     }
@@ -1278,6 +1304,48 @@ function poolFetch(name,path,init){
     log('info','connection pools: '+(on.length?on.map(n=>n+' on '+POOL_ADDR[n]).join(', '):'none reachable, using the page’s own address'));
   });
 })();
+// The voice (/speak-stream) and the translator (/translate) hold a connection for
+// as long as a caption's clip takes to come, seconds at a time in clauses mode. On
+// 2026-11-22 they shared localhost with everything else: voice requests queued
+// behind each other, the voice fell 34-38 s behind, and every Router check in
+// those 39 and 48 s timed out in the queue while the server answered the rest in
+// 215 ms. They now take three lanes of their own (18 connections), each request
+// the lane with the fewest open, and localhost is left to the Router, the quote
+// checks and the session saves.
+// Order matters: the clauses voice (server voice_clauses) puts captions' words into
+// its clips in the order their requests ARRIVE. One address kept that order, as the
+// browser sends an address's waiting requests in turn; three lanes would not once
+// all were full, since the lane that freed first would send ITS waiting request. So
+// a request goes out only onto a lane with a connection free (LANE_CONNS), and while
+// none is, it waits here in order; each one that ends sends the oldest waiting.
+const VOICE_LANES=['v1','v2','v3'], LANE_CONNS=6;
+const voiceQ=[];   // {path, init, ok, no}, oldest first
+function voiceFetch(path,init){
+  const sig=init&&init.signal;
+  if(!VOICE_LANES.some(n=>poolOn[n]) || (sig&&sig.aborted)) return fetch(path,init);
+  return new Promise((ok,no)=>{
+    const w={path,init,ok,no};
+    if(sig) sig.addEventListener('abort',()=>{          // given up on while it waited
+      const i=voiceQ.indexOf(w);
+      if(i>=0){ voiceQ.splice(i,1); no(sig.reason||new DOMException('aborted','AbortError')); }
+    },{once:true});
+    voiceQ.push(w);
+    voiceSend();
+  });
+}
+function voiceSend(){
+  while(voiceQ.length){
+    let lane=null, least=LANE_CONNS;
+    for(const n of VOICE_LANES){
+      if(!poolOn[n]) continue;
+      const k=openOn(POOL_ADDR[n]);
+      if(k<least){ lane=n; least=k; }
+    }
+    if(!lane && VOICE_LANES.some(n=>poolOn[n])) return;  // all full: wait for one to end
+    const w=voiceQ.shift();
+    (lane ? poolFetch(lane,w.path,w.init) : fetch(w.path,w.init)).then(w.ok,w.no);
+  }
+}
 
 // ---- latency metrics -------------------------------------------------------
 // The pipe has three cloud stages and one deliberate wait, and until now only
@@ -1705,6 +1773,28 @@ function jDone(cell,o){
   J.dirty=true;
 }
 function jEvent(kind,data){ J.events.push({at:Date.now(),kind,...data}); J.dirty=true; }
+// A spoken row's voice request, for finding out what holds the voice back (the
+// 2026-11-22 record could not say). row.voice = {sent: when it left (epochNow ms),
+// due_s: seconds to its moment the server was told, then ms after sent: first, its
+// first audio here; end, the last of its answer; and from that first audio line,
+// in: the same wait counted from the request reaching the server (first - in = time
+// queued in this browser for a connection), ttfb and queue: the voice provider's
+// answer and the wait for a synthesis slot (server.py _tts_chunk_lines); err.
+function jVoice(j,dueS){
+  if(!j) return {audio(){}, end(){}};
+  const t0=performance.now(), v={sent:Math.round(epochNow()), ...(dueS!=null?{due_s:dueS}:{})};
+  j.voice=v; J.dirty=true;
+  return {
+    audio(m){
+      if(v.first!=null) return;
+      v.first=Math.round(performance.now()-t0);
+      if(m.in_ms!=null) v.in=m.in_ms;
+      if(m.ttfb_ms!=null){ v.ttfb=m.ttfb_ms; v.queue=m.queue_ms||0; }
+      J.dirty=true;
+    },
+    end(err){ v.end=Math.round(performance.now()-t0); if(err) v.err=String(err).slice(0,80); J.dirty=true; }
+  };
+}
 function optText(sel){ const o=sel&&sel.selectedOptions&&sel.selectedOptions[0]; return o?o.textContent.trim():''; }
 // Every setting that changes what reaches the room, by the name the panel gives
 // it. Settings that only apply to the voice in use are listed only while it is.
@@ -2823,10 +2913,17 @@ function takeVerse(e){
   if(e.why==='request') log('warn','Attendant: REQUESTED '+(e.local||e.ref||'nothing named yet')+(e.spoken?' — “'+e.spoken+'”':''));
   else if(e.state==='active' && e.was!=='active') log('info','Attendant: reading '+(e.local||e.ref));
 }
+// One poll at a time: four a second with no answer back (a server busy for a
+// second) would fill localhost's six connections, where the Router checks and the
+// sentence-end scores (/sat) need them.
+let verseBusy=false;
 async function pollVerse(){
-  if(!attendant) return;
+  if(!attendant || verseBusy) return;
   let d;
-  try{ d=await (await fetch('/verse-feed?since='+verseSeq,{cache:'no-store'})).json(); }catch(e){ return; }
+  verseBusy=true;
+  try{ d=await (await fetch('/verse-feed?since='+verseSeq,{cache:'no-store'})).json(); }
+  catch(e){ return; }
+  finally{ verseBusy=false; }
   if(!!d.on!==!!(attStatus&&attStatus.on)) renderAttendant(d);
   if(!d.on) return;
   if(d.seq<verseSeq) verseSeq=0;              // the server restarted
@@ -3159,7 +3256,7 @@ function reflectKnobs(){
   $('delayV').textContent=wait+' s';
   $('delayHelp').textContent=voiceStyled()&&+delayEl.value<STYLED_MIN_S
     ? 'Expression tags need about 2 s to style each clip, so the voice waits '+wait+' s.'
-    : 'Longer: more whole sentences, further behind him.';
+    : 'Finished sentences are read at once. Longer: fewer cut at a comma.';
   placeMeterZones();                                   // move the threshold line/zone live as you drag
 }
 [gainEl,paceEl].forEach(el=>el.addEventListener('input',()=>{reflectKnobs();applyLiveKnobs();saveSettings();}));
@@ -5890,7 +5987,7 @@ async function routerTranslate(text,lang,model,flagged,span,clues,conf){
   const cap=setTimeout(()=>{ slow=true; ctl.abort(); },ROUTER_MT_MS);
   try{
     const pair=sessionPair();
-    const r=await fetch('/translate',{method:'POST',headers:{'Content-Type':'application/json'},
+    const r=await voiceFetch('/translate',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({text,target_lang:lang,model,tts:false,flagged,...(pair?{pair}:{}),
         ...(conf&&conf.length?{conf}:{}),
         ...(model===HEAR_MODEL && span?{hear:true}:{}),
@@ -5934,10 +6031,11 @@ async function routerTranslate(text,lang,model,flagged,span,clues,conf){
 async function speakCaption(text,el,segId,lang){
   if(!(ttsBox.checked && caps.tts && voiceCan(lang))){ if(caps.tts && voiceCan(lang)) addReplay(el,text,[],lang); return; }
   const ticket=openAudioTicket(el,el&&el.j&&el.j.spoke);
-  const clips=[]; let parts=[], clipText='';
+  const clips=[]; let parts=[], clipText='', fail='';
+  const due=voiceDueS(el&&el.j&&el.j.spoke), vt=jVoice(el&&el.j,due);
   try{
-    const r=await fetch('/speak-stream',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({text,target_lang:lang,...ttsParams(),voice_due_s:voiceDueS(el&&el.j&&el.j.spoke)})});
+    const r=await voiceFetch('/speak-stream',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text,target_lang:lang,...ttsParams(),voice_due_s:due})});
     if(!r.ok || !r.body) throw new Error('HTTP '+r.status);
     const reader=r.body.getReader(), decoder=new TextDecoder();
     let buf='';
@@ -5952,6 +6050,7 @@ async function speakCaption(text,el,segId,lang){
         const msg=JSON.parse(line);
         if(msg.type==='audio_chunk'){
           if(msg.ttfb_ms!=null){ noteLat('tts',msg.ttfb_ms); noteLat('tts_queue',msg.queue_ms||0); }
+          vt.audio(msg);
           audioSlice(ticket,msg.data,msg.last,msg.text);
           if(msg.text!=null) clipText=msg.text;
           if(msg.data) parts.push(b64Bytes(msg.data));
@@ -5964,11 +6063,12 @@ async function speakCaption(text,el,segId,lang){
         }else if(msg.type==='error'){
           log('warn','voice: '+msg.error);
           setDot(ttsDot,'error',msg.error);
+          fail=msg.error;
         }
       }
     }
-  }catch(err){ log('warn','voice failed: '+err.message); }
-  finally{ closeAudioTicket(ticket); }
+  }catch(err){ log('warn','voice failed: '+err.message); fail=err.message; }
+  finally{ closeAudioTicket(ticket); vt.end(fail); }
   addReplay(el,text,clips,lang);
   publishSegAudio(segId,clips);
 }
@@ -6603,15 +6703,17 @@ async function pumpTranslate(){
   // said the batch's first word, which the clauses voice sits behind.
   const firstWord=Math.min(...batch.flatMap(b=>b.spoken||[]).filter(x=>x!=null));
   const ticket=openAudioTicket(el,isFinite(firstWord)?firstWord:0);
+  const due=voiceDueS(isFinite(firstWord)?firstWord:0), vt=jVoice(wantTTS&&el&&el.j,due);
+  let vfail='';
   try{
-    const r=await fetch('/translate',{method:'POST',headers:{'Content-Type':'application/json'},
+    const r=await voiceFetch('/translate',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({text,target_lang:batchTgt,model,tts:wantTTS,
         ...(pair?{pair}:{}),
         ...(conf.some(v=>v!=null)?{conf}:{}),
         ...(hearOn()?{hear:true}:{}),
         ...earClueFields(batch.map(b=>b.srcSeq)),
         ...(audio && (hearOn() || readingsOn())?{audio}:{}),
-        ...ttsParams(),voice_due_s:voiceDueS(isFinite(firstWord)?firstWord:0)}),signal:ctl.signal});
+        ...ttsParams(),voice_due_s:due}),signal:ctl.signal});
     if(!r.ok || !r.body) throw new Error('HTTP '+r.status);
     // NDJSON stream: {delta} appends to the caption as Claude generates it,
     // {audio_chunk} enqueues one already-complete clip (per-sentence, so
@@ -6653,6 +6755,7 @@ async function pumpTranslate(){
           // …but end-to-end is per BATCH, and only the first clip counts: it is
           // the moment the room stops waiting.
           if(!sawAudio){ sawAudio=true; if(spokeAt) noteLat('e2e',performance.now()-spokeAt); }
+          vt.audio(msg);
           audioSlice(ticket,msg.data,msg.last,msg.text);   // ordered against other batches
           // Replay needs whole clips, but audio now arrives in slices -- gather
           // a sentence's slices and mint one Blob URL when `last` closes it.
@@ -6752,6 +6855,7 @@ async function pumpTranslate(){
   }catch(err){
     const msg=why ? 'translator '+why+' ('+((performance.now()-reqAt)/1000).toFixed(1)+'s)'
                   : err.name==='AbortError' ? 'timed out' : err.message;
+    vfail=msg;
     // Past "final" the caption is already on the wall, the projector and the
     // transcript. A failure here is the AUDIO half giving out and costs this
     // batch its voice and nothing else -- retrying would re-translate and
@@ -6789,6 +6893,7 @@ async function pumpTranslate(){
     // playback order, and everything behind it waits until that place is given
     // up. This is the one line that must never be skipped.
     closeAudioTicket(ticket);
+    vt.end(vfail);
     // In the finally, not after it. This flag is the whole pipeline's gate: if
     // it is ever left true the translator stops for the rest of the service,
     // captions keep filling the Original column, and nothing says why. Sitting
@@ -7128,11 +7233,10 @@ function openAudioTicket(el,spokeMs){
 }
 // The clauses voice (caps.el_voice_mode, server voice_clauses): the server cuts
 // the voice into clips at full stops and returns each clip on the ticket of the
-// caption it began with. Each clip starts about voice_delay_s after the preacher
-// said its first word (up to NAT_EARLY sooner, in a pause of his), so the voice
-// sits a steady few seconds behind him and pauses where he paused instead of
-// wherever it ran out of words. It catches up in his pauses, not by speed: see
-// "the natural room voice" below.
+// caption it began with. A whole sentence plays as soon as the voice is free; a
+// sentence still unfinished voice_delay_s after its first word is cut at a comma
+// and starts then (up to NAT_EARLY sooner, in a pause of his). It catches up in
+// his pauses, not by speed: see "the natural room voice" below.
 let clauseRate=1;
 function clauseMode(){
   const p=ttsProvider();
@@ -7177,10 +7281,15 @@ function voiceDueS(spokeMs){
 // this reads 27 of 288 minutes faster than 1x, none past 1.1x, and glues 9
 // sentences instead of 1,297, a few seconds further behind him at the 90th
 // percentile (15-19 s at a 12 s delay; 33 s on the fastest service).
-//   - A sentence starts at the later of its moment less NAT_EARLY (his first word
-//     + the delay - 4 s: a pause of his is shortened, never removed) and a natural
-//     gap after the voice falls quiet: NAT_SENT_GAP after a full stop, NAT_MIN_GAP
-//     once over NAT_SOFT s behind (the clip's own edge silence comes on top).
+//   - A clip that ends a sentence starts a natural gap after the voice falls quiet:
+//     NAT_SENT_GAP after a full stop, NAT_MIN_GAP once over NAT_SOFT s behind (the
+//     clip's own edge silence comes on top). It does not wait for its moment: the
+//     sentence is whole, so waiting gains nothing (2026-11-23; it used to wait for
+//     its moment less NAT_EARLY, his first word + the delay - 4 s).
+//   - A piece cut before its full stop (at a comma once its moment came, or at a
+//     pause) starts at the later of that gap and its moment less NAT_EARLY. The
+//     delay is the longest a sentence waits for its full stop, counted from its
+//     own first word.
 //   - A clip carrying on the sentence just spoken (cut at a comma, here within
 //     FOLLOW_MS of the voice falling silent) follows after NAT_CLAUSE_GAP.
 //   - The gap is silence put into the timeline in front of the clip (slot.lead,
@@ -7209,7 +7318,10 @@ function holdTicket(slot){
   const quietAt=now+queuedAudioS()/Math.max(1,curRate)*1000;      // when the voice falls silent
   const due=slot.spokeMs+voiceDelayS()*1000;
   const gap=cont?NAT_CLAUSE_GAP:(quietAt-due>NAT_SOFT*1000?NAT_MIN_GAP:NAT_SENT_GAP);
-  const start=cont?quietAt+gap*1000:Math.max(quietAt+gap*1000,due-NAT_EARLY*1000);
+  // A finished sentence has nothing to wait for: it goes once the voice is quiet,
+  // and the next sentence's moment counts from its own first word (2026-11-23).
+  const whole=slot.text!=null&&SENT_END.test(slot.text);
+  const start=(cont||whole)?quietAt+gap*1000:Math.max(quietAt+gap*1000,due-NAT_EARLY*1000);
   const lead=(start-quietAt)/1000;
   if(lead>NAT_HOLD_OVER){
     if(!AUQ.timer) AUQ.timer=setTimeout(()=>{ AUQ.timer=0; drainAudioTickets(); },Math.min(1000,(lead-NAT_HOLD_OVER)*1000+20));

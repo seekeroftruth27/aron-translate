@@ -2225,6 +2225,7 @@ def _tts_chunk_lines(text, opts, meta=None):
     average them alongside the stages it times for itself:
       ttfb_ms   request sent -> first audio byte (the provider's own answer time)
       queue_ms  how long this sentence waited for a TTS_SEM slot
+      in_ms     the page's request reaching this server -> this line (_in_ms)
     Split apart because they are different problems with different fixes: a slow
     ttfb_ms is a provider question, while a queue_ms that is never 0 means
     CT_TTS_MAX_INFLIGHT is too low for how fast the speaker is going. From the
@@ -2277,7 +2278,7 @@ def _tts_chunk_lines(text, opts, meta=None):
                     line = {"type": "audio_chunk", "seq": seq,
                             "data": base64.b64encode(pending).decode("ascii")}
                     if seq == 0:
-                        line.update(metrics)
+                        line.update(metrics, **_in_ms(meta))
                         line["text"] = text
                     if kept is not None:
                         kept.append(pending)
@@ -2291,6 +2292,7 @@ def _tts_chunk_lines(text, opts, meta=None):
                     line["text"] = text
                     if metrics:
                         line.update(metrics)
+                    line.update(_in_ms(meta))
                 if kept is not None:
                     kept.append(pending)
                 yield json.dumps(line) + "\n"
@@ -2321,6 +2323,16 @@ def _tts_chunk_lines(text, opts, meta=None):
 VOICE_STREAM = voice_stream.VoiceStream()
 VOICE_DIRECTOR = voice_director.VoiceDirector()
 VOICE_CLAUSES = voice_clauses.ClauseVoice(VOICE_DIRECTOR)
+
+
+def _in_ms(meta):
+    """{"in_ms": ms since the page's request reached this server}, for a clip's
+    first line, or {} where the caller did not stamp `meta["t_in"]`
+    (time.monotonic()). The page times the same clip from when it sent the
+    request, so its number less this one is the time the request spent waiting in
+    the browser for a connection -- which the server cannot see."""
+    t_in = (meta or {}).get("t_in")
+    return {"in_ms": round((time.monotonic() - t_in) * 1000)} if t_in else {}
 
 
 def _num(v):
@@ -2431,7 +2443,7 @@ def _stream_tts_lines(text, opts, meta=None, lag=0.0, clip=None):
                 line = {"type": "audio_chunk", "seq": seq,
                         "data": base64.b64encode(pending).decode("ascii")}
                 if seq == 0:
-                    line.update({"ttfb_ms": clip.ttfb_ms, "queue_ms": 0, "text": text})
+                    line.update({"ttfb_ms": clip.ttfb_ms, "queue_ms": 0, "text": text}, **_in_ms(meta))
                     print(f"[tts] stream first byte {clip.ttfb_ms}ms (lag {lag:.1f}s)"
                           f" [elevenlabs {model}] {text[:48]!r}", flush=True)
                 if kept is not None:
@@ -2442,7 +2454,7 @@ def _stream_tts_lines(text, opts, meta=None, lag=0.0, clip=None):
         line = {"type": "audio_chunk", "seq": seq, "last": True,
                 "data": base64.b64encode(pending or b"").decode("ascii")}
         if seq == 0:
-            line.update({"ttfb_ms": clip.ttfb_ms, "queue_ms": 0, "text": text})
+            line.update({"ttfb_ms": clip.ttfb_ms, "queue_ms": 0, "text": text}, **_in_ms(meta))
         if kept is not None and pending:
             kept.append(pending)
         yield json.dumps(line) + "\n"
@@ -2500,8 +2512,8 @@ def translate_ep():
                                             starts a third of a second in
                                             rather than after the whole clip.
                                             The seq-0 line also carries
-                                            ttfb_ms/queue_ms for that clip (see
-                                            _tts_chunk_lines)
+                                            ttfb_ms/queue_ms/in_ms for that
+                                            clip (see _tts_chunk_lines)
       {"type":"final","text":...,"seconds":...}  -- authoritative full caption,
                                          sent as soon as the model is done and
                                          BEFORE this batch's audio. Everything
@@ -2541,6 +2553,7 @@ def translate_ep():
     own business. A "condense" flag used to let audio lag reach back into this
     prompt and ask for a shortened spoken variant; that coupling is gone.
     """
+    t_in = time.monotonic()                     # each clip's in_ms counts from here (_in_ms)
     data = request.get_json(silent=True) or {}
     text = (data.get("text") or "").strip()
     target_lang = (data.get("target_lang") or DEFAULT_TARGET_LANG).lower()
@@ -2619,7 +2632,7 @@ def translate_ep():
     # from THIS source text, into THIS language. One sentence of the batch is
     # one clip, so the source is the batch's -- the honest attribution, and the
     # one that lets a saved transcript sit source beside translation.
-    rec_meta = {"src": text, "lang": target_lang}
+    rec_meta = {"src": text, "lang": target_lang, "t_in": t_in}
 
     if not text:
         def _empty():
@@ -3153,6 +3166,7 @@ def speak_stream_ep():
     per-sentence clips, and the same running voice context, so the page plays
     it through the same ordered timeline. Body: {text, target_lang, ...tts
     params}."""
+    t_in = time.monotonic()                     # each clip's in_ms counts from here (_in_ms)
     data = request.get_json(silent=True) or {}
     text = (data.get("text") or "").strip()
     if not TTS_CAPABLE:
@@ -3161,7 +3175,7 @@ def speak_stream_ep():
     if target_lang not in TARGET_LANGUAGES:
         target_lang = DEFAULT_TARGET_LANG
     opts = _tts_opts(data, target_lang)
-    meta = {"src": (data.get("src") or "").strip(), "lang": target_lang}
+    meta = {"src": (data.get("src") or "").strip(), "lang": target_lang, "t_in": t_in}
     lag = _stream_wanted(data, opts)
     clause_lag = _clauses_wanted(data, opts)
     clause_tags = bool(data.get("voice_tags"))
@@ -3420,8 +3434,9 @@ def publish_audio_ep():
     return jsonify(ok=True)
 
 
-# The operator page sends its captions, web relay posts and ProPresenter commands to
-# this same server at other loopback addresses (127.0.0.1 ... 127.0.0.4): to the
+# The operator page sends its captions, web relay posts, ProPresenter commands, voice
+# and translations to this same server at other loopback addresses (127.0.0.1 ...
+# 127.0.0.7): to the
 # browser each address has its own six connections, so a request that hangs on a
 # stalled provider cannot hold the room's captions in line behind it (see "connection
 # pools" in index.html). From the page's point of view that is another origin, so it
